@@ -9,6 +9,8 @@ jobs:
   build:
     name: Build and Release Exe
     runs-on: windows-latest # Must be Windows to build an .exe
+    permissions:
+      contents: write # Grant permission to create a release
 
     steps:
       - name: Checkout code
