@@ -1,15 +1,17 @@
-import os
 import json
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
-from .utils import extract_background_color, extract_font_color, fill_bbox_with_bg, get_projection_segments
+import os
+import shutil
+from collections import Counter
+
 import cv2
 import numpy as np
-import string
-from collections import Counter
-from PIL import ImageFont
+from PIL import ImageFont, Image
+from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
+from pptx.util import Pt
+
+from .utils import extract_background_color, extract_font_color, fill_bbox_with_bg, get_projection_segments
 
 
 class Character:
@@ -28,11 +30,61 @@ class Character:
                 f"size={self.font_size}, bold={self.bold})")
 
 
+class PageContext:
+    def __init__(self, page_image, coords, slide):
+        self.slide = slide
+        self.original_image = page_image.copy()
+        self.background_image = page_image.copy()
+        self.coords = coords
+        self.elements = []
+        self.raw_chars = []
+        self.corrected_chars = []
+
+    def add_element_bbox_for_cleanup(self, bbox):
+        """Register a bounding box to be inpainted on the background image."""
+        if bbox:
+            px_box = [int(v * (self.coords['img_w'] / self.coords['json_w'] if i % 2 == 0 else self.coords['img_h'] / self.coords['json_h'])) for i, v in enumerate(bbox)]
+            fill_bbox_with_bg(self.background_image, px_box)
+
+    def add_processed_element(self, elem_type, data):
+        """Store a fully processed element ready for rendering."""
+        self.elements.append({'type': elem_type, 'data': data})
+
+    def add_characters(self, raw_chars, corrected_chars):
+        if raw_chars: self.raw_chars.extend(raw_chars)
+        if corrected_chars: self.corrected_chars.extend(corrected_chars)
+
+    def generate_debug_images(self, page_index, generator_instance):
+        """Generate and save debug images for the page."""
+        generator_instance._draw_debug_boxes_for_page(self.original_image, self.raw_chars, self.coords, f"tmp/page_{page_index}_raw.png")
+        generator_instance._draw_debug_boxes_for_page(self.original_image, self.corrected_chars, self.coords, f"tmp/page_{page_index}_corrected.png")
+
+    def render_to_slide(self, generator_instance):
+        """Render all processed elements onto the PowerPoint slide."""
+        # 1. Render the cleaned background
+        bg_path = f"temp_bg_{id(self.slide)}.png"
+        cv2.imwrite(bg_path, cv2.cvtColor(self.background_image, cv2.COLOR_RGB2BGR))
+        w_pts, h_pts = generator_instance.prs.slide_width, generator_instance.prs.slide_height
+        self.slide.shapes.add_picture(bg_path, Pt(0), Pt(0), w_pts, h_pts)
+        os.remove(bg_path)
+
+        # 2. Render all image elements first
+        for elem in self.elements:
+            if elem['type'] == 'image':
+                generator_instance._add_picture_from_bbox(self.slide, elem['data']['bbox'], self.original_image, self.coords, elem['data']['text_elements'])
+
+        # 3. Render all text elements on top
+        for elem in self.elements:
+            if elem['type'] == 'text':
+                generator_instance._render_text_from_data(self.slide, elem['data'])
+
+
 class PPTGenerator:
-    def __init__(self, output_path, perform_cleanup=True):
+    def __init__(self, output_path, remove_watermark=True):
         self.prs = Presentation()
         self.output_path = output_path
-        self.perform_cleanup = perform_cleanup
+        self.remove_watermark = remove_watermark
+        self.debug_images = False # Will be set in process_page
         for i in range(len(self.prs.slides) - 1, -1, -1):
             rId = self.prs.slides._sldIdLst[i].rId
             self.prs.part.drop_rel(rId)
@@ -167,19 +219,19 @@ class PPTGenerator:
         px1, py1, px2, py2 = max(0, px1), max(0, py1), min(w, px2), min(h, py2)
         search_top_py = max(0, search_top_py)
 
-        if px2 <= px1 or py2 <= search_top_py:
+        if px2 <= px1 or py2 <= py1:
             return []
 
         # Define the single, consistent scaling factors for this line based on the tight box.
         scale_x = (x2 - x1) / (px2 - px1) if (px2 - px1) > 0 else 0
         scale_y = (y2 - y1) / (py2 - py1) if (py2 - py1) > 0 else 0
 
-        # Define the region of interest in the image for character searching.
-        search_roi = page_image[search_top_py:py2, px1:px2]
+        # Define the region of interest strictly for the tight line box for primary character segmentation.
+        tight_roi = page_image[py1:py2, px1:px2]
 
-        # Segment main characters within the search ROI.
+        # Segment main characters within the TIGHT ROI.
         all_chars = self._segment_characters_in_roi(
-            search_roi, (px1, search_top_py), line_color, line_index, tight_bbox, scale_x, scale_y
+            tight_roi, tight_bbox, line_color, line_index, scale_x
         )
 
         if not all_chars:
@@ -229,8 +281,7 @@ class PPTGenerator:
                             new_tight_bbox = [gap_x1, new_tight_y1, gap_x2, y2]
                             recovered_chars.extend(
                                 self._segment_characters_in_roi(
-                                    adjusted_gap_roi, (gap_px1, adjusted_roi_py1), new_font_color, line_index,
-                                    new_tight_bbox, scale_x, scale_y
+                                    adjusted_gap_roi, new_tight_bbox, new_font_color, line_index, scale_x
                                 )
                             )
         if recovered_chars:
@@ -238,26 +289,29 @@ class PPTGenerator:
             all_chars.sort(key=lambda c: c.bbox[0])
         return all_chars
 
-    def _segment_characters_in_roi(self, roi, roi_start_pixels, color, line_index, tight_json_bbox, scale_x, scale_y):
-        roi_px1, roi_py1 = roi_start_pixels
-        initial_chars_px = get_projection_segments(roi, color, axis=0, min_length=2)
+    def _segment_characters_in_roi(self, roi, tight_bbox, color, line_index, scale_x):
+        # Detect horizontal pixel segments where characters are likely present.
+        character_pixel_segments = get_projection_segments(roi, color, axis=0, min_length=2)
+        if not character_pixel_segments:
+            return []
+
         char_objects = []
-        if not initial_chars_px: return []
+        min_char_pixel_width = 4
 
-        min_char_width = 8
-        char_json_y1 = tight_json_bbox[1]
-        char_json_y2 = tight_json_bbox[3]
+        # Unpack the tight bounding box in JSON coordinates.
+        json_x1, json_y1, _, json_y2 = tight_bbox
 
-        # Get the pixel x-coordinate of the tight bbox's left edge to use as a reference.
-        tight_px1 = int(tight_json_bbox[0] / scale_x if scale_x else 0)
+        # Iterate over each detected pixel segment.
+        for start_px, end_px in character_pixel_segments:
+            if end_px - start_px < min_char_pixel_width:
+                continue
 
-        for sx, ex in initial_chars_px:
-            if ex - sx < min_char_width: continue
+            # Convert the relative pixel coordinates of the segment back to absolute JSON coordinates.
+            char_json_x1 = json_x1 + start_px * scale_x
+            char_json_x2 = json_x1 + end_px * scale_x
 
-            # Calculate final JSON x-coordinates relative to the tight box's origin and the consistent scales.
-            char_json_x1 = tight_json_bbox[0] + (roi_px1 - tight_px1 + sx) * scale_x
-            char_json_x2 = tight_json_bbox[0] + (roi_px1 - tight_px1 + ex) * scale_x
-            char_bbox = [char_json_x1, char_json_y1, char_json_x2, char_json_y2]
+            # Create the final bounding box for the character.
+            char_bbox = [char_json_x1, json_y1, char_json_x2, json_y2]
             char_objects.append(Character(bbox=char_bbox, color=color, line_index=line_index))
 
         return char_objects
@@ -275,12 +329,14 @@ class PPTGenerator:
         try:
             font = ImageFont.truetype("msyh.ttc", size=30)
             ideal_height = 30
-            # Define full-width punctuation marks which have a narrower visual width.
-            full_width_punctuation = "，。、；：？！（）【】“”‘’《》"
             ideal_char_ratios = []
             for c in non_space_chars:
-                if c in full_width_punctuation:
-                    ideal_char_ratios.append(0.3)
+                if c in "iI,":
+                    ideal_char_ratios.append(0.15)
+                elif c in "，。、；：？！（）‘’":
+                    ideal_char_ratios.append(0.25)
+                elif c in "【】“”《》":
+                    ideal_char_ratios.append(0.35)
                 else:
                     ideal_char_ratios.append(font.getlength(c) / ideal_height)
         except IOError:
@@ -291,6 +347,23 @@ class PPTGenerator:
         def get_merge_cost(start, end, char_idx):
             if (start, end, char_idx) in memo_cost:
                 return memo_cost[(start, end, char_idx)]
+
+            # Rule 2: Don't merge boxes of different colors.
+            first_color = chars[start].color
+            for i in range(start + 1, end):
+                if chars[i].color != first_color:
+                    memo_cost[(start, end, char_idx)] = float('inf')
+                    return float('inf')
+
+            # Rule 1: Don't merge boxes of different heights (with 20% tolerance).
+            heights = [c.bbox[3] - c.bbox[1] for c in chars[start:end]]
+            if not heights:
+                memo_cost[(start, end, char_idx)] = float('inf')
+                return float('inf')
+            min_h, max_h = min(heights), max(heights)
+            if max_h > min_h * 1.2:
+                memo_cost[(start, end, char_idx)] = float('inf')
+                return float('inf')
 
             merged_bbox = [chars[start].bbox[0],
                            min(c.bbox[1] for c in chars[start:end]),
@@ -303,7 +376,25 @@ class PPTGenerator:
                 return float('inf')
 
             merged_ratio = merged_width / merged_height
-            cost = abs(merged_ratio - ideal_char_ratios[char_idx])
+            ideal_ratio = ideal_char_ratios[char_idx]
+
+            # If ideal ratio is for a full-width char (close to 1) and the detected ratio
+            # is slightly narrower (0.9-1.0), treat it as a perfect match (cost 0).
+            if ideal_ratio > 0.9 and 0.9 <= merged_ratio <= 1.0:
+                cost = 0
+            else:
+                cost = abs(merged_ratio - ideal_ratio)
+
+            # Adjust cost based on the gap with the preceding character. A larger gap reduces the cost.
+            gap_width = 0
+            if start > 0:
+                gap = chars[start].bbox[0] - chars[start - 1].bbox[2]
+                if gap > 0:
+                    gap_width = gap
+
+            if merged_height > 0:
+                cost -= 0.1 * (gap_width / merged_height)
+
             memo_cost[(start, end, char_idx)] = cost
             return cost
 
@@ -360,7 +451,7 @@ class PPTGenerator:
 
         return styles
 
-    def _normalize_colors(self, styles, threshold=40):
+    def _normalize_colors(self, styles, threshold=50):
         if not styles:
             return styles
 
@@ -401,207 +492,318 @@ class PPTGenerator:
             cv2.rectangle(debug_img, (px_box[0], px_box[1]), (px_box[2], px_box[3]), (0, 0, 255), 2)  # Red box
         cv2.imwrite(output_path, cv2.cvtColor(debug_img, cv2.COLOR_RGB2BGR))
 
-    def _process_text(self, slide, elem, page_image, coords):
-        bbox = elem.get("bbox");
-        if not bbox: return None, None
-        txBox = self._create_textbox(slide, bbox, coords)
-        tf = txBox.text_frame;
-        tf.clear();
-        tf.margin_bottom = tf.margin_top = tf.margin_left = tf.margin_right = Pt(0)
-        tf.word_wrap = True;
-        p = tf.paragraphs[0];
-        p.alignment = PP_ALIGN.LEFT
+    def _process_text(self, context, elem):
+        bbox = elem.get("bbox")
+        if not bbox: return
+
+        context.add_element_bbox_for_cleanup(bbox)
+
         all_spans = [s for l in elem.get("lines", []) for s in l.get("spans", [])] if "lines" in elem else elem.get(
             "spans", [])
-        if not all_spans: p.text = elem.get("text", ""); return None, None
+        if not all_spans:
+            text_content = elem.get("text", "")
+            if text_content:
+                context.add_processed_element('text', {'bbox': bbox, 'text_runs': [{'text': text_content}]})
+            return
+
+        # Pre-process spans for bullet points
         if all_spans:
             first_span_content = all_spans[0].get("content", "")
             if first_span_content.lstrip().startswith('-'):
                 cleaned_content = first_span_content.lstrip(' \t\n\r\f\v-•*·')
                 all_spans[0]["content"] = "• " + cleaned_content
+
         full_text = "".join([s.get("content", "").replace('\\%', '%') for s in all_spans])
-        if not full_text.strip(): return None, None
+        if not full_text.strip(): return
         print(f"\n--- Processing Text ---\nContent: '{full_text.strip()[:100]}...'")
-        raw_chars, corrected_chars = None, None
+
         try:
-            line_infos = self._get_line_ranges(page_image, bbox, coords)
+            line_infos = self._get_line_ranges(context.original_image, bbox, context.coords)
             print(f"Detected lines: {len(line_infos)}")
             if not line_infos: raise ValueError("No lines detected.")
-            raw_chars = self._detect_raw_characters(page_image, line_infos, bbox, coords)
-            corrected_chars = self._analyze_and_correct_bboxes(raw_chars, full_text, coords)
+
+            raw_chars = self._detect_raw_characters(context.original_image, line_infos, bbox, context.coords)
+
+            # Heuristic for fixing missing bullet points based on color change
+            if len(raw_chars) >= 2 and raw_chars[0].color != raw_chars[1].color:
+                if not full_text.lstrip().startswith(('•', '·', '*', '-')):
+                    full_text = "• " + full_text
+
+            corrected_chars = self._analyze_and_correct_bboxes(raw_chars, full_text, context.coords)
+            context.add_characters(raw_chars, corrected_chars)
 
             non_space_chars = [c for c in full_text if c not in " \n"]
             can_align = len(corrected_chars) == len(non_space_chars)
             print(f"Character alignment successful: {can_align}")
             print(f"Using char-by-char styling (mixed layout support): {can_align}")
+
             if not can_align:
-                self._render_by_line(p, all_spans, line_infos, coords, elem.get("type"))
-                return raw_chars, corrected_chars
-            final_styles = self._determine_character_styles(corrected_chars, coords, elem.get("type"))
+                # Fallback to line-based rendering
+                text_runs = self._get_text_runs_by_line(all_spans, line_infos, context.coords, elem.get("type"))
+                context.add_processed_element('text', {'bbox': bbox, 'text_runs': text_runs})
+                return
+
+            final_styles = self._determine_character_styles(corrected_chars, context.coords, elem.get("type"))
             final_styles = self._normalize_font_sizes(final_styles)
             final_styles = self._normalize_colors(final_styles)
-            style_iter = iter(final_styles)
-            last_style = None
-            for char in full_text:
-                run = p.add_run();
-                run.text = char;
-                font = run.font;
-                font.name = "Microsoft YaHei"
-                if char not in " \n":
-                    style = next(style_iter, None)
-                    if style:
-                        font.size = Pt(style.font_size);
-                        font.color.rgb = RGBColor(*style.color);
-                        font.bold = style.bold
-                        last_style = style
-                elif last_style:
-                    font.size = Pt(last_style.font_size);
-                    font.color.rgb = RGBColor(*last_style.color);
-                    font.bold = last_style.bold
-        except Exception:
-            sp = txBox.element;
-            sp.getparent().remove(sp)
-            self._render_spans_in_bbox(slide, all_spans, bbox, page_image, coords, elem_type=elem.get("type"))
-        return raw_chars, corrected_chars
 
-    def _render_by_line(self, paragraph, all_spans, line_infos, coords, elem_type):
+            # Determine if single-line based on character analysis BEFORE adding to context
+            line_indices = {char.line_index for char in final_styles}
+            is_single_line = len(line_indices) <= 1
+
+            text_runs = self._get_text_runs_by_char(full_text, final_styles)
+            context.add_processed_element('text', {'bbox': bbox, 'text_runs': text_runs, 'is_single_line': is_single_line})
+
+        except Exception:
+            # Broad exception fallback
+            text_runs = self._get_text_runs_from_spans(all_spans, bbox, context.original_image, context.coords, elem.get("type"))
+            # Fallback check for single-line
+            is_single_line = not any('\n' in run['text'] for run in text_runs)
+            context.add_processed_element('text', {'bbox': bbox, 'text_runs': text_runs, 'is_single_line': is_single_line})
+
+    def _get_text_runs_by_char(self, full_text, final_styles):
+        """Generates styled text runs from character-by-character analysis."""
+        runs = []
+        style_iter = iter(final_styles)
+        last_style = None
+        for char in full_text:
+            font_info = {'name': "Microsoft YaHei"}
+            if char not in " \n":
+                style = next(style_iter, None)
+                if style:
+                    font_info['size'] = Pt(style.font_size)
+                    font_info['color'] = RGBColor(*style.color)
+                    font_info['bold'] = style.bold
+                    last_style = style
+            elif last_style:
+                font_info['size'] = Pt(last_style.font_size)
+                font_info['color'] = RGBColor(*last_style.color)
+                font_info['bold'] = last_style.bold
+            runs.append({'text': char, 'font': font_info})
+        return runs
+
+    def _get_text_runs_by_line(self, all_spans, line_infos, coords, elem_type):
+        """Generates styled text runs using line-based analysis as a fallback."""
+        runs = []
         span_idx = 0
         for i, info in enumerate(line_infos):
-            line_range = info['range'];
+            line_range = info['range']
             line_spans = []
             while span_idx < len(all_spans):
-                span = all_spans[span_idx];
+                span = all_spans[span_idx]
                 sbbox = span.get("bbox")
                 if sbbox and sbbox[1] < line_range[1] and sbbox[3] > line_range[0]:
-                    line_spans.append(span);
+                    line_spans.append(span)
                     span_idx += 1
                 else:
                     break
             if not line_spans: continue
+
             line_text = "".join([s.get("content", "").replace('\\%', '%') for s in line_spans])
             if not line_text.strip() and i < len(line_infos) - 1: line_text += "\n"
-            run = paragraph.add_run();
-            run.text = line_text;
-            font = run.font
-            font.name = "Microsoft YaHei";
-            font.color.rgb = RGBColor(*info['color'])
-            font_size_pts = (line_range[1] - line_range[0]) * coords['scale_y']
-            font.size = Pt(int(max(font_size_pts, 6.0)))
-            if elem_type == "title": font.bold = True
-            if i < len(line_infos) - 1 and not line_text.endswith('\n'): paragraph.add_run().text = '\n'
 
-    def _render_spans_in_bbox(self, slide, spans, bbox, page_image, coords, elem_type=None):
-        if not spans: return
-        txBox = self._create_textbox(slide, bbox, coords)
-        p = txBox.text_frame.paragraphs[0];
-        txBox.text_frame.clear()
+            font_size_pts = (line_range[1] - line_range[0]) * coords['scale_y']
+            font_info = {
+                'name': "Microsoft YaHei",
+                'color': RGBColor(*info['color']),
+                'size': Pt(int(max(font_size_pts, 6.0))),
+                'bold': elem_type == "title"
+            }
+            runs.append({'text': line_text, 'font': font_info})
+            if i < len(line_infos) - 1 and not line_text.endswith('\n'):
+                runs.append({'text': '\n', 'font': font_info}) # Keep consistent font for newline
+        return runs
+
+    def _get_text_runs_from_spans(self, spans, bbox, page_image, coords, elem_type=None):
+        """Generates a single styled text run as a last-resort fallback."""
+        if not spans: return []
         font_size_pts = (bbox[3] - bbox[1]) * coords['scale_y']
         full_text = "".join([s.get("content", "").replace('\\%', '%') for s in spans])
-        run = p.add_run();
-        run.text = full_text;
-        font = run.font
-        font.name = "Microsoft YaHei";
-        font.size = Pt(int(font_size_pts))
-        if elem_type == "title": font.bold = True
         bg_color = extract_background_color(page_image, bbox)
         color, _, _ = extract_font_color(page_image, bbox, bg_color)
-        font.color.rgb = RGBColor(*color)
+        font_info = {
+            'name': "Microsoft YaHei",
+            'size': Pt(int(font_size_pts)),
+            'bold': elem_type == "title",
+            'color': RGBColor(*color)
+        }
+        return [{'text': full_text, 'font': font_info}]
 
-    def _process_list(self, slide, elem, page_image, coords, page_char_lists=None):
-        for block in elem.get("blocks", []):
-            spans = [s for l in block.get("lines", []) for s in l.get("spans", [])] if "lines" in block else block.get(
-                "spans", [])
-            if spans:
-                spans.sort(key=lambda s: (s.get("bbox", [0, 0, 0, 0])[1], s.get("bbox", [0, 0, 0, 0])[0]))
-                spans[0]["content"] = "• " + spans[0].get("content", "").lstrip(' ·-*•')
-                raw_chars, corrected_chars = self._process_text(slide, block, page_image, coords)
-                if page_char_lists is not None:
-                    if raw_chars: page_char_lists['raw'].extend(raw_chars)
-                    if corrected_chars: page_char_lists['corrected'].extend(corrected_chars)
+    def _render_text_from_data(self, slide, text_data):
+        """Renders a text element from processed data onto a slide."""
+        bbox = text_data['bbox']
+        text_runs = text_data.get('text_runs', [])
+        is_single_line = text_data.get('is_single_line', False)
 
-    def _process_image(self, slide, elem, page_image, coords, text_elements):
-        bbox = elem.get("bbox")
+        # If it's a single line, widen the textbox to prevent wrapping due to font differences.
+        if is_single_line:
+            x1, y1, x2, y2 = bbox
+            width = x2 - x1
+            new_x2 = x1 + width * 1.2
+            render_bbox = [x1, y1, new_x2, y2]
+        else:
+            render_bbox = bbox
+
+        txBox = self._create_textbox(slide, render_bbox, self.coords_for_render)
+        tf = txBox.text_frame
+        tf.clear()
+        tf.margin_bottom = tf.margin_top = tf.margin_left = tf.margin_right = Pt(0)
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT
+
+        for run_data in text_runs:
+            run = p.add_run()
+            run.text = run_data['text']
+            font = run.font
+            font_info = run_data.get('font', {})
+            font.name = font_info.get('name', "Microsoft YaHei")
+            if 'size' in font_info: font.size = font_info['size']
+            if 'color' in font_info: font.color.rgb = font_info['color']
+            if 'bold' in font_info: font.bold = font_info['bold']
+
+    def _add_picture_from_bbox(self, slide, bbox, page_image, coords, text_elements):
         if not bbox: return
         x1, y1, x2, y2 = bbox;
         left, top, w, h = Pt(x1 * coords['scale_x']), Pt(y1 * coords['scale_y']), Pt((x2 - x1) * coords['scale_x']), Pt(
             (y2 - y1) * coords['scale_y'])
         px_box = [int(x1 * coords['img_w'] / coords['json_w']), int(y1 * coords['img_h'] / coords['json_h']),
                   int(x2 * coords['img_w'] / coords['json_w']), int(y2 * coords['img_h'] / coords['json_h'])]
-        crop = page_image[px_box[1]:px_box[3], px_box[0]:px_box[2]]
-        if self.perform_cleanup and text_elements:
-            for txt_e in text_elements:
-                txt_box = txt_e.get("bbox")
-                if txt_box and self._get_bbox_intersection(bbox, txt_box):
-                    px_txt_box = [int(v * (
-                        coords['img_w'] / coords['json_w'] if i % 2 == 0 else coords['img_h'] / coords['json_h'])) for
-                                  i, v in enumerate(txt_box)]
-                    inter = self._get_bbox_intersection(px_box, px_txt_box)
-                    if inter:
-                        local_inter = [inter[0] - px_box[0], inter[1] - px_box[1], inter[2] - px_box[0],
-                                       inter[3] - px_box[1]]
-                        fill_bbox_with_bg(crop, local_inter)
+        crop = page_image[px_box[1]:px_box[3], px_box[0]:px_box[2]].copy()
+
+        # This cleanup logic is now less critical due to the global background inpainting,
+        # but can still be useful for images that contain text not defined as a separate text element.
+        for txt_e in text_elements:
+            txt_box = txt_e.get("bbox")
+            if txt_box and self._get_bbox_intersection(bbox, txt_box):
+                px_txt_box = [int(v * (
+                    coords['img_w'] / coords['json_w'] if i % 2 == 0 else coords['img_h'] / coords['json_h'])) for
+                              i, v in enumerate(txt_box)]
+                inter = self._get_bbox_intersection(px_box, px_txt_box)
+                if inter:
+                    local_inter = [inter[0] - px_box[0], inter[1] - px_box[1], inter[2] - px_box[0],
+                                   inter[3] - px_box[1]]
+                    fill_bbox_with_bg(crop, local_inter)
+
         if crop.size > 0:
-            path = f"temp_crop_{elem.get('type')}_{x1}_{y1}.png";
+            path = f"temp_crop_img_{x1}_{y1}.png";
             cv2.imwrite(path, cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
             slide.shapes.add_picture(path, left, top, w, h);
             os.remove(path)
 
-    def _process_element(self, slide, elem, page_image, coords, text_elements=None, page_char_lists=None):
+    def _process_image(self, context, elem, text_elements):
+        context.add_element_bbox_for_cleanup(elem.get("bbox"))
+
+        if "blocks" in elem and elem["blocks"]:
+            image_block_bbox = None
+            for block in elem["blocks"]:
+                if block.get("type") == "image_body" or (block.get("spans") and block["spans"][0].get("type") == "image"):
+                    image_block_bbox = block.get("bbox")
+                    break
+
+            # Add the main image part to the render queue
+            img_bbox_to_render = image_block_bbox or elem.get("bbox")
+            context.add_processed_element('image', {'bbox': img_bbox_to_render, 'text_elements': text_elements})
+
+            # Process any text blocks within the image element
+            for block in elem["blocks"]:
+                if block.get("type") == "image_caption":
+                    self._process_text(context, block)
+        else:
+            # Simple image
+            context.add_processed_element('image', {'bbox': elem.get("bbox"), 'text_elements': text_elements})
+
+    def _process_list(self, context, elem):
+        for block in elem.get("blocks", []):
+            # Prepend bullet point
+            spans = [s for l in block.get("lines", []) for s in l.get("spans", [])] if "lines" in block else block.get("spans", [])
+            if spans:
+                spans.sort(key=lambda s: (s.get("bbox", [0,0,0,0])[1], s.get("bbox", [0,0,0,0])[0]))
+                spans[0]["content"] = "• " + spans[0].get("content", "").lstrip(' ·-*•')
+
+            # Re-assign modified spans back to the block before processing
+            if "lines" in block and block["lines"]:
+                block["lines"][0]["spans"] = spans
+            else:
+                block["spans"] = spans
+
+            self._process_text(context, block)
+
+    def _process_element(self, context, elem, all_text_elements):
         cat = elem.get("type", "text")
         if cat == "list":
-            self._process_list(slide, elem, page_image, coords, page_char_lists=page_char_lists)
+            self._process_list(context, elem)
         elif cat in ["text", "title", "caption", "footnote", "footer", "header", "page_number"]:
-            raw_chars, corrected_chars = self._process_text(slide, elem, page_image, coords)
-            if page_char_lists is not None:
-                if raw_chars: page_char_lists['raw'].extend(raw_chars)
-                if corrected_chars: page_char_lists['corrected'].extend(corrected_chars)
+            self._process_text(context, elem)
         elif cat in ["image", "table", "formula", "figure"]:
-            self._process_image(slide, elem, page_image, coords, text_elements or [])
+            self._process_image(context, elem, all_text_elements)
 
-    def process_page(self, slide, elements, page_image, page_size=None, page_index=0):
+    def process_page(self, slide, elements, page_image, page_size=None, page_index=0, debug_images=False):
+        self.debug_images = debug_images
         img_h, img_w = page_image.shape[:2]
         json_w, json_h = page_size if page_size and all(page_size) else (img_w * 72 / 300, img_h * 72 / 300)
         w_pts, h_pts = self.cap_size(json_w, json_h)
         self.prs.slide_width, self.prs.slide_height = Pt(w_pts), Pt(h_pts)
         coords = {'scale_x': w_pts / json_w, 'scale_y': h_pts / json_h, 'img_w': img_w, 'img_h': img_h,
                   'json_w': json_w, 'json_h': json_h}
+        self.coords_for_render = coords # Store for render phase
+
+        context = PageContext(page_image, coords, slide)
+
         text_types = ["list", "text", "title", "caption", "footnote", "footer", "header", "page_number"]
-        img_types = ["image", "table", "formula", "figure"]
-        text_elems = [e for e in elements if e.get("type", "text") in text_types]
-        img_elems = [e for e in elements if e.get("type") in img_types]
-        original_img = page_image.copy()
-        if self.perform_cleanup:
-            for elem in elements:
-                if elem.get("bbox"):
-                    px_box = [int(v * (
-                        coords['img_w'] / coords['json_w'] if i % 2 == 0 else coords['img_h'] / coords['json_h'])) for
-                              i, v in enumerate(elem["bbox"])]
-                    fill_bbox_with_bg(page_image, px_box)
-        bg_path = f"temp_bg_{id(slide)}.png";
-        cv2.imwrite(bg_path, cv2.cvtColor(page_image, cv2.COLOR_RGB2BGR))
-        slide.shapes.add_picture(bg_path, Pt(0), Pt(0), Pt(w_pts), Pt(h_pts));
-        os.remove(bg_path)
-        for elem in img_elems: self._process_element(slide, elem, original_img, coords, text_elements=text_elems)
+        all_text_elements = [e for e in elements if e.get("type", "text") in text_types]
 
-        page_chars = {'raw': [], 'corrected': []}
-        for elem in text_elems: self._process_element(slide, elem, original_img, coords, page_char_lists=page_chars)
+        # Phase 1: Analyze and populate context.
+        # First, register bboxes for background cleanup.
+        # Erase all elements, or just discarded blocks if watermark removal is on.
+        for elem in elements:
+            is_discarded = elem.get('is_discarded', False)
+            if not is_discarded or (is_discarded and self.remove_watermark):
+                context.add_element_bbox_for_cleanup(elem.get("bbox"))
 
-        # Generate page-level debug images
-        self._draw_debug_boxes_for_page(original_img, page_chars['raw'], coords, f"tmp/page_{page_index}_raw.png")
-        self._draw_debug_boxes_for_page(original_img, page_chars['corrected'], coords, f"tmp/page_{page_index}_corrected.png")
+        # Second, process elements to extract content for rendering.
+        for elem in elements:
+            # If watermark removal is on, skip processing/rendering discarded blocks.
+            if elem.get('is_discarded') and self.remove_watermark:
+                continue
+            self._process_element(context, elem, all_text_elements)
+
+        # Phase 2: Render from context
+        context.render_to_slide(self)
+
+        # Phase 3: Generate debug output if enabled
+        if self.debug_images:
+            context.generate_debug_images(page_index, self)
 
     def save(self):
         self.prs.save(self.output_path)
 
 
-def convert_mineru_to_ppt(json_path, pdf_path, output_ppt_path):
+def convert_mineru_to_ppt(json_path, input_path, output_ppt_path, remove_watermark=True, debug_images=False):
     from .utils import pdf_to_images
     DPI = 300
+
+    if debug_images:
+        if os.path.exists("tmp"):
+            shutil.rmtree("tmp")
+        os.makedirs("tmp")
+
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    images = pdf_to_images(pdf_path, dpi=DPI)
-    gen = PPTGenerator(output_ppt_path, perform_cleanup=True)
+    # Generate page images from either a PDF or a single image file
+    if input_path.lower().endswith('.pdf'):
+        images = pdf_to_images(input_path, dpi=DPI)
+    else:
+        try:
+            img = Image.open(input_path)
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            images = [np.array(img)]
+        except Exception as e:
+            raise IOError(f"Failed to load image file: {input_path} - {e}")
+
+    gen = PPTGenerator(output_ppt_path, remove_watermark=remove_watermark)
     pages = data if isinstance(data, list) else next(
         (data[k] for k in ["pdf_info", "pages"] if k in data and isinstance(data[k], list)), [data])
     print(f"[CLEANUP] Found {len(pages)} pages.")
@@ -611,9 +813,18 @@ def convert_mineru_to_ppt(json_path, pdf_path, output_ppt_path):
         page_img = images[i].copy()
         if i == 0: gen.set_slide_size(page_img.shape[1], page_img.shape[0], dpi=DPI)
         slide = gen.add_slide()
-        elements = [item for key in ["para_blocks", "images", "tables"] for item in page_data.get(key, [])]
+
+        elements = []
+        for key in ["para_blocks", "images", "tables"]:
+            for item in page_data.get(key, []):
+                item['is_discarded'] = False
+                elements.append(item)
+        for item in page_data.get("discarded_blocks", []):
+            item['is_discarded'] = True
+            elements.append(item)
+
         page_size = page_data.get("page_size") or (page_data.get("page_info", {}).get("width"),
                                                    page_data.get("page_info", {}).get("height"))
-        gen.process_page(slide, elements, page_img, page_size=page_size, page_index=i)
+        gen.process_page(slide, elements, page_img, page_size=page_size, page_index=i, debug_images=debug_images)
     gen.save()
     print(f"Saved to {output_ppt_path}")

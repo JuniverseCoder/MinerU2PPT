@@ -3,7 +3,6 @@ import cv2
 import numpy as np
 from PIL import Image
 import io
-import math
 from collections import Counter
 
 def pdf_to_images(pdf_path, dpi=300):
@@ -57,7 +56,7 @@ def extract_font_color(image, bbox, bg_color):
 
     pixels = roi.reshape(-1, 3)
     diff_bg = np.linalg.norm(pixels - bg_color, axis=1)
-    fg_pixels = pixels[diff_bg > 80]
+    fg_pixels = pixels[diff_bg > 100]
 
     if fg_pixels.shape[0] == 0:
         return (0, 0, 0), 0, 0
