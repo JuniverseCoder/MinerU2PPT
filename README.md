@@ -32,6 +32,19 @@ As a user, you only need the standalone executable file (e.g., `MinerU2PPT.exe`)
 
 4.  **Open Your File**: Once the conversion is complete, click the "Open Output Folder" button to find your new `.pptx` file.
 
+### Using Batch Mode
+
+The application also supports converting multiple files at once in Batch Mode.
+
+1.  **Switch to Batch Mode**: Click the "Batch Mode" button in the top-right corner of the application. The interface will switch to the batch processing view.
+2.  **Add Tasks**:
+    -   Click the "Add Task" button. A new window will pop up.
+    -   In the popup, select the **Input File**, the corresponding **MinerU JSON File**, and specify the **Output Path**.
+    -   Set the **Remove Watermark** option for this specific task.
+    -   Click "OK" to add the task to the list.
+3.  **Manage Tasks**: You can add multiple tasks to the list. If you need to remove a task, select it from the list and click "Delete Task".
+4.  **Start Batch Conversion**: Once all your tasks are added, click "Start Batch Conversion". The application will process each task sequentially. A log will show the progress for each file.
+
 ## For Developers
 
 This section provides instructions for running the application from source and packaging it for distribution.

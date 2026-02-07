@@ -37,6 +37,10 @@ This file provides guidance to Claude Code when working with code in this reposi
   - **Bullet Point Correction**: A heuristic prepends a bullet character (`•`) if the first two detected `raw_chars` in a text block have different colors.
   - **Single-Line Textbox Widening**: Single-line textboxes are widened by 20% during rendering to prevent unwanted wrapping.
 - **GUI Logic**:
+  - **Single and Batch Modes**: The GUI supports two modes of operation. Users can switch between converting a single file and managing a list of files for batch processing.
+  - **Modal Task Dialog**: In batch mode, a modal `AddTaskDialog` is used to add new conversion tasks. This dialog includes its own file browsers and drag-and-drop functionality.
+  - **Dynamic UI**: The main window's UI changes dynamically based on the selected mode. Options that are not relevant for batch mode (like debugging) are hidden to simplify the interface.
+  - **Per-Task Options**: In batch mode, options like "Remove Watermark" are configured individually for each task within the `AddTaskDialog`.
   - **Internationalization (i18n)**: Auto-detects OS language for English or Chinese UI.
-  - **Drag and Drop**: `tkinterdnd2` is used for file inputs.
-  - **Asynchronous Processing**: The conversion runs in a separate thread to keep the GUI responsive.
+  - **Drag and Drop**: `tkinterdnd2` is used for file inputs in both the main window and the task dialog.
+  - **Asynchronous Processing**: The conversion process runs in a separate thread to keep the GUI responsive, for both single and batch conversions.
