@@ -34,9 +34,9 @@ class TestCase1OCR(unittest.TestCase):
             self.assertIn("[OCR] Page 1:", log_text)
             self.assertNotIn("fallback to MinerU-only", log_text)
             self.assertIn("candidates=", log_text)
-            self.assertIn("groups=", log_text)
+            self.assertTrue("groups=" in log_text or "group_replaced=" in log_text)
             self.assertIn("added=", log_text)
-            self.assertIn("mineru_removed=", log_text)
+            self.assertTrue("mineru_removed=" in log_text or "overlap_replaced=" in log_text)
 
             from PIL import Image
             import numpy as np
