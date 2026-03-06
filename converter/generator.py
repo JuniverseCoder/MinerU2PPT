@@ -11,6 +11,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 
+from .ocr_merge import PaddleOCREngine, merge_ocr_text_elements, TEXT_ELEMENT_TYPES
 from .utils import extract_background_color, extract_font_color, fill_bbox_with_bg, get_projection_segments
 
 
@@ -40,10 +41,19 @@ class PageContext:
         self.raw_chars = []
         self.corrected_chars = []
 
-    def add_element_bbox_for_cleanup(self, bbox):
+    def add_element_bbox_for_cleanup(self, bbox, margin_px=0, margin_ratio=0.0, min_margin_px=1):
         """Register a bounding box to be inpainted on the background image."""
         if bbox:
             px_box = [int(v * (self.coords['img_w'] / self.coords['json_w'] if i % 2 == 0 else self.coords['img_h'] / self.coords['json_h'])) for i, v in enumerate(bbox)]
+            x1, y1, x2, y2 = px_box
+
+            if margin_ratio > 0:
+                height = max(1, y2 - y1)
+                margin = max(min_margin_px, int(round(height * margin_ratio)))
+                px_box = [x1 - margin, y1 - margin, x2 + margin, y2 + margin]
+            elif margin_px > 0:
+                px_box = [x1 - margin_px, y1 - margin_px, x2 + margin_px, y2 + margin_px]
+
             fill_bbox_with_bg(self.background_image, px_box)
 
     def add_processed_element(self, elem_type, data):
@@ -58,6 +68,18 @@ class PageContext:
         """Generate and save debug images for the page."""
         generator_instance._draw_debug_boxes_for_page(self.original_image, self.raw_chars, self.coords, f"tmp/page_{page_index}_raw.png")
         generator_instance._draw_debug_boxes_for_page(self.original_image, self.corrected_chars, self.coords, f"tmp/page_{page_index}_corrected.png")
+
+        text_bboxes = [
+            elem['data']['bbox']
+            for elem in self.elements
+            if elem.get('type') == 'text' and elem.get('data', {}).get('bbox')
+        ]
+        generator_instance._draw_text_bboxes_for_page(
+            self.original_image,
+            text_bboxes,
+            self.coords,
+            f"tmp/page_{page_index}_text_boxes.png",
+        )
 
     def render_to_slide(self, generator_instance):
         """Render all processed elements onto the PowerPoint slide."""
@@ -79,11 +101,27 @@ class PageContext:
                 generator_instance._render_text_from_data(self.slide, elem['data'])
 
 
+TEXT_CLEANUP_MARGIN_RATIO = 0.05
+TEXT_CLEANUP_MIN_MARGIN_PX = 1
+
+
 class PPTGenerator:
-    def __init__(self, output_path, remove_watermark=True):
+    def __init__(
+        self,
+        output_path,
+        remove_watermark=True,
+        ocr_engine=None,
+        ocr_device_policy="auto",
+        ocr_model_root=None,
+        ocr_offline_only=True,
+    ):
         self.prs = Presentation()
         self.output_path = output_path
         self.remove_watermark = remove_watermark
+        self.ocr_engine = ocr_engine
+        self.ocr_device_policy = ocr_device_policy
+        self.ocr_model_root = ocr_model_root
+        self.ocr_offline_only = ocr_offline_only
         self.debug_images = False # Will be set in process_page
         for i in range(len(self.prs.slides) - 1, -1, -1):
             rId = self.prs.slides._sldIdLst[i].rId
@@ -108,6 +146,23 @@ class PPTGenerator:
         x1, y1 = max(bbox1[0], bbox2[0]), max(bbox1[1], bbox2[1])
         x2, y2 = min(bbox1[2], bbox2[2]), min(bbox1[3], bbox2[3])
         return [x1, y1, x2, y2] if x1 < x2 and y1 < y2 else None
+
+    def _has_bbox_overlap(self, bbox1, bbox2):
+        return self._get_bbox_intersection(bbox1, bbox2) is not None
+
+    def _to_px_bbox(self, bbox, coords):
+        return [
+            int(bbox[0] * coords['img_w'] / coords['json_w']),
+            int(bbox[1] * coords['img_h'] / coords['json_h']),
+            int(bbox[2] * coords['img_w'] / coords['json_w']),
+            int(bbox[3] * coords['img_h'] / coords['json_h']),
+        ]
+
+    def _line_center_y(self, line):
+        bbox = line.get('bbox')
+        if not bbox:
+            return 0.0
+        return (bbox[1] + bbox[3]) / 2
 
     def _create_textbox(self, slide, bbox, coords):
         x1, y1, x2, y2 = bbox
@@ -492,140 +547,113 @@ class PPTGenerator:
             cv2.rectangle(debug_img, (px_box[0], px_box[1]), (px_box[2], px_box[3]), (0, 0, 255), 2)  # Red box
         cv2.imwrite(output_path, cv2.cvtColor(debug_img, cv2.COLOR_RGB2BGR))
 
+    def _draw_text_bboxes_for_page(self, image, text_bboxes, coords, output_path):
+        """Draw text-level bounding boxes for debugging."""
+        debug_img = image.copy()
+        for bbox in text_bboxes:
+            px_box = [
+                int(bbox[0] * coords['img_w'] / coords['json_w']),
+                int(bbox[1] * coords['img_h'] / coords['json_h']),
+                int(bbox[2] * coords['img_w'] / coords['json_w']),
+                int(bbox[3] * coords['img_h'] / coords['json_h'])
+            ]
+            cv2.rectangle(debug_img, (px_box[0], px_box[1]), (px_box[2], px_box[3]), (0, 255, 0), 2)
+        cv2.imwrite(output_path, cv2.cvtColor(debug_img, cv2.COLOR_RGB2BGR))
+
+    def _build_ocr_text_runs(self, context, elem, all_spans):
+        bbox = elem.get("bbox")
+        if not bbox or not all_spans:
+            return [], False
+
+        lines = elem.get("lines", [])
+        if not lines:
+            lines = [{"bbox": bbox, "spans": all_spans}]
+
+        sorted_lines = sorted(lines, key=self._line_center_y)
+        runs = []
+
+        for line_idx, line in enumerate(sorted_lines):
+            line_bbox = line.get("bbox") or bbox
+            line_px_bbox = self._to_px_bbox(line_bbox, context.coords)
+            bg_color = extract_background_color(context.original_image, line_px_bbox)
+            color, _, _ = extract_font_color(context.original_image, line_px_bbox, bg_color)
+            font_size_pts = max(6.0, (line_bbox[3] - line_bbox[1]) * context.coords['scale_y'])
+
+            line_text = "".join(
+                span.get("content", "").replace("\\%", "%")
+                for span in line.get("spans", [])
+            )
+            if not line_text:
+                continue
+
+            font_info = {
+                "name": "Microsoft YaHei",
+                "size": Pt(int(font_size_pts)),
+                "bold": elem.get("type") == "title",
+                "color": RGBColor(*color),
+            }
+            runs.append({"text": line_text, "font": font_info})
+
+            if line_idx < len(sorted_lines) - 1:
+                runs.append({"text": "\n", "font": font_info})
+
+        if not runs:
+            return [], False
+
+        is_single_line = len([r for r in runs if r["text"] != "\n"]) <= 1
+        return runs, is_single_line
+
     def _process_text(self, context, elem):
         bbox = elem.get("bbox")
-        if not bbox: return
+        if not bbox:
+            return
 
-        context.add_element_bbox_for_cleanup(bbox)
+        context.add_element_bbox_for_cleanup(
+            bbox,
+            margin_ratio=TEXT_CLEANUP_MARGIN_RATIO,
+            min_margin_px=TEXT_CLEANUP_MIN_MARGIN_PX,
+        )
 
-        all_spans = [s for l in elem.get("lines", []) for s in l.get("spans", [])] if "lines" in elem else elem.get(
-            "spans", [])
+        all_spans = [s for l in elem.get("lines", []) for s in l.get("spans", [])] if "lines" in elem else elem.get("spans", [])
         if not all_spans:
             text_content = elem.get("text", "")
             if text_content:
-                context.add_processed_element('text', {'bbox': bbox, 'text_runs': [{'text': text_content}]})
+                context.add_processed_element("text", {"bbox": bbox, "text_runs": [{"text": text_content}]})
             return
 
-        # Pre-process spans for bullet points
-        if all_spans:
-            first_span_content = all_spans[0].get("content", "")
-            if first_span_content.lstrip().startswith('-'):
-                cleaned_content = first_span_content.lstrip(' \t\n\r\f\v-•*·')
-                all_spans[0]["content"] = "• " + cleaned_content
+        first_span_content = all_spans[0].get("content", "")
+        if first_span_content.lstrip().startswith("-"):
+            cleaned_content = first_span_content.lstrip(" \t\n\r\f\v-•*·")
+            all_spans[0]["content"] = "• " + cleaned_content
 
-        full_text = "".join([s.get("content", "").replace('\\%', '%') for s in all_spans])
-        if not full_text.strip(): return
-        print(f"\n--- Processing Text ---\nContent: '{full_text.strip()[:100]}...'")
+        full_text = "".join([s.get("content", "").replace("\\%", "%") for s in all_spans])
+        if not full_text.strip():
+            return
 
-        try:
-            line_infos = self._get_line_ranges(context.original_image, bbox, context.coords)
-            print(f"Detected lines: {len(line_infos)}")
-            if not line_infos: raise ValueError("No lines detected.")
-
-            raw_chars = self._detect_raw_characters(context.original_image, line_infos, bbox, context.coords)
-
-            # Heuristic for fixing missing bullet points based on color change
-            if len(raw_chars) >= 2 and raw_chars[0].color != raw_chars[1].color:
-                if not full_text.lstrip().startswith(('•', '·', '*', '-')):
-                    full_text = "• " + full_text
-
-            corrected_chars = self._analyze_and_correct_bboxes(raw_chars, full_text, context.coords)
-            context.add_characters(raw_chars, corrected_chars)
-
-            non_space_chars = [c for c in full_text if c not in " \n"]
-            can_align = len(corrected_chars) == len(non_space_chars)
-            print(f"Character alignment successful: {can_align}")
-            print(f"Using char-by-char styling (mixed layout support): {can_align}")
-
-            if not can_align:
-                # Fallback to line-based rendering
-                text_runs = self._get_text_runs_by_line(all_spans, line_infos, context.coords, elem.get("type"))
-                context.add_processed_element('text', {'bbox': bbox, 'text_runs': text_runs})
+        if elem.get("source") == "ocr":
+            text_runs, is_single_line = self._build_ocr_text_runs(context, elem, all_spans)
+            if text_runs:
+                context.add_processed_element("text", {"bbox": bbox, "text_runs": text_runs, "is_single_line": is_single_line})
                 return
 
-            final_styles = self._determine_character_styles(corrected_chars, context.coords, elem.get("type"))
-            final_styles = self._normalize_font_sizes(final_styles)
-            final_styles = self._normalize_colors(final_styles)
-
-            # Determine if single-line based on character analysis BEFORE adding to context
-            line_indices = {char.line_index for char in final_styles}
-            is_single_line = len(line_indices) <= 1
-
-            text_runs = self._get_text_runs_by_char(full_text, final_styles)
-            context.add_processed_element('text', {'bbox': bbox, 'text_runs': text_runs, 'is_single_line': is_single_line})
-
-        except Exception:
-            # Broad exception fallback
-            text_runs = self._get_text_runs_from_spans(all_spans, bbox, context.original_image, context.coords, elem.get("type"))
-            # Fallback check for single-line
-            is_single_line = not any('\n' in run['text'] for run in text_runs)
-            context.add_processed_element('text', {'bbox': bbox, 'text_runs': text_runs, 'is_single_line': is_single_line})
-
-    def _get_text_runs_by_char(self, full_text, final_styles):
-        """Generates styled text runs from character-by-character analysis."""
-        runs = []
-        style_iter = iter(final_styles)
-        last_style = None
-        for char in full_text:
-            font_info = {'name': "Microsoft YaHei"}
-            if char not in " \n":
-                style = next(style_iter, None)
-                if style:
-                    font_info['size'] = Pt(style.font_size)
-                    font_info['color'] = RGBColor(*style.color)
-                    font_info['bold'] = style.bold
-                    last_style = style
-            elif last_style:
-                font_info['size'] = Pt(last_style.font_size)
-                font_info['color'] = RGBColor(*last_style.color)
-                font_info['bold'] = last_style.bold
-            runs.append({'text': char, 'font': font_info})
-        return runs
-
-    def _get_text_runs_by_line(self, all_spans, line_infos, coords, elem_type):
-        """Generates styled text runs using line-based analysis as a fallback."""
-        runs = []
-        span_idx = 0
-        for i, info in enumerate(line_infos):
-            line_range = info['range']
-            line_spans = []
-            while span_idx < len(all_spans):
-                span = all_spans[span_idx]
-                sbbox = span.get("bbox")
-                if sbbox and sbbox[1] < line_range[1] and sbbox[3] > line_range[0]:
-                    line_spans.append(span)
-                    span_idx += 1
-                else:
-                    break
-            if not line_spans: continue
-
-            line_text = "".join([s.get("content", "").replace('\\%', '%') for s in line_spans])
-            if not line_text.strip() and i < len(line_infos) - 1: line_text += "\n"
-
-            font_size_pts = (line_range[1] - line_range[0]) * coords['scale_y']
-            font_info = {
-                'name': "Microsoft YaHei",
-                'color': RGBColor(*info['color']),
-                'size': Pt(int(max(font_size_pts, 6.0))),
-                'bold': elem_type == "title"
-            }
-            runs.append({'text': line_text, 'font': font_info})
-            if i < len(line_infos) - 1 and not line_text.endswith('\n'):
-                runs.append({'text': '\n', 'font': font_info}) # Keep consistent font for newline
-        return runs
+        text_runs = self._get_text_runs_from_spans(all_spans, bbox, context.original_image, context.coords, elem.get("type"))
+        is_single_line = not any("\n" in run["text"] for run in text_runs)
+        context.add_processed_element("text", {"bbox": bbox, "text_runs": text_runs, "is_single_line": is_single_line})
 
     def _get_text_runs_from_spans(self, spans, bbox, page_image, coords, elem_type=None):
-        """Generates a single styled text run as a last-resort fallback."""
-        if not spans: return []
+        if not spans:
+            return []
+
         font_size_pts = (bbox[3] - bbox[1]) * coords['scale_y']
         full_text = "".join([s.get("content", "").replace('\\%', '%') for s in spans])
-        bg_color = extract_background_color(page_image, bbox)
-        color, _, _ = extract_font_color(page_image, bbox, bg_color)
+        px_bbox = self._to_px_bbox(bbox, coords)
+        bg_color = extract_background_color(page_image, px_bbox)
+        color, _, _ = extract_font_color(page_image, px_bbox, bg_color)
         font_info = {
             'name': "Microsoft YaHei",
-            'size': Pt(int(font_size_pts)),
+            'size': Pt(int(max(font_size_pts, 6.0))),
             'bold': elem_type == "title",
-            'color': RGBColor(*color)
+            'color': RGBColor(*color),
         }
         return [{'text': full_text, 'font': font_info}]
 
@@ -750,7 +778,35 @@ class PPTGenerator:
 
         context = PageContext(page_image, coords, slide)
 
-        text_types = ["list", "text", "title", "caption", "footnote", "footer", "header", "page_number"]
+        text_types = list(TEXT_ELEMENT_TYPES)
+
+        if self.ocr_engine is None:
+            self.ocr_engine = PaddleOCREngine(
+                device_policy=self.ocr_device_policy,
+                model_root=self.ocr_model_root,
+                offline_only=self.ocr_offline_only,
+            )
+
+        try:
+            ocr_elements = self.ocr_engine.extract_text_elements(page_image, json_w, json_h)
+        except Exception as e:
+            raise RuntimeError(f"[OCR] Page {page_index + 1}: OCR extraction failed: {e}") from e
+
+        elements, merge_stats = merge_ocr_text_elements(
+            elements,
+            ocr_elements,
+            self._has_bbox_overlap,
+            text_types,
+        )
+        print(
+            f"[OCR] Page {page_index + 1}: "
+            f"candidates={merge_stats['ocr_candidates']}, "
+            f"groups={merge_stats['ocr_groups']}, "
+            f"merged={merge_stats['ocr_merged']}, "
+            f"added={merge_stats['ocr_added']}, "
+            f"mineru_removed={merge_stats['mineru_removed_overlap']}"
+        )
+
         all_text_elements = [e for e in elements if e.get("type", "text") in text_types]
 
         # Phase 1: Analyze and populate context.
@@ -779,7 +835,17 @@ class PPTGenerator:
         self.prs.save(self.output_path)
 
 
-def convert_mineru_to_ppt(json_path, input_path, output_ppt_path, remove_watermark=True, debug_images=False):
+def convert_mineru_to_ppt(
+    json_path,
+    input_path,
+    output_ppt_path,
+    remove_watermark=True,
+    debug_images=False,
+    ocr_engine=None,
+    ocr_device_policy="auto",
+    ocr_model_root=None,
+    ocr_offline_only=True,
+):
     from .utils import pdf_to_images
     DPI = 300
 
@@ -803,7 +869,14 @@ def convert_mineru_to_ppt(json_path, input_path, output_ppt_path, remove_waterma
         except Exception as e:
             raise IOError(f"Failed to load image file: {input_path} - {e}")
 
-    gen = PPTGenerator(output_ppt_path, remove_watermark=remove_watermark)
+    gen = PPTGenerator(
+        output_ppt_path,
+        remove_watermark=remove_watermark,
+        ocr_engine=ocr_engine,
+        ocr_device_policy=ocr_device_policy,
+        ocr_model_root=ocr_model_root,
+        ocr_offline_only=ocr_offline_only,
+    )
     pages = data if isinstance(data, list) else next(
         (data[k] for k in ["pdf_info", "pages"] if k in data and isinstance(data[k], list)), [data])
     print(f"[CLEANUP] Found {len(pages)} pages.")

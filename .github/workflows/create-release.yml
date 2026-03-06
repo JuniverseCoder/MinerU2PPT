@@ -7,10 +7,20 @@ on:
 
 jobs:
   build:
-    name: Build and Release Exe
+    name: Build and Release ${{ matrix.variant }}
     runs-on: windows-latest # Must be Windows to build an .exe
     permissions:
       contents: write # Grant permission to create a release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            requirements_file: requirements-cpu.txt
+            asset_name: MinerU2PPT-win64-cpu.zip
+          - variant: gpu-cu118
+            requirements_file: requirements-gpu-cu118.txt
+            asset_name: MinerU2PPT-win64-gpu-cu118.zip
 
     steps:
       - name: Checkout code
@@ -24,14 +34,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r ${{ matrix.requirements_file }}
 
-      - name: Build the executable with PyInstaller
-        run: pyinstaller --windowed --onefile --name MinerU2PPT gui.py
+      - name: Build onedir package with PyInstaller spec
+        run: pyinstaller --clean gui.spec
 
-      - name: Create Release and Upload Asset
+      - name: Archive onedir output
+        run: |
+          Compress-Archive -Path dist/MinerU2PPT/* -DestinationPath dist/${{ matrix.asset_name }} -Force
+        shell: pwsh
+
+      - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/MinerU2PPT.exe
+          files: dist/${{ matrix.asset_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

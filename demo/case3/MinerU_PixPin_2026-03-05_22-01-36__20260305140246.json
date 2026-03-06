@@ -1,0 +1,131 @@
+{
+    "pdf_info": [
+        {
+            "para_blocks": [
+                {
+                    "bbox": [
+                        51,
+                        44,
+                        1076,
+                        94
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                51,
+                                44,
+                                1076,
+                                94
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        51,
+                                        44,
+                                        1076,
+                                        94
+                                    ],
+                                    "type": "text",
+                                    "content": "体系化增益：从单点的开发提效到全局的资产与服务升级"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 0
+                },
+                {
+                    "type": "table",
+                    "bbox": [
+                        40,
+                        133,
+                        1177,
+                        630
+                    ],
+                    "blocks": [
+                        {
+                            "bbox": [
+                                40,
+                                133,
+                                1177,
+                                630
+                            ],
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        40,
+                                        133,
+                                        1177,
+                                        630
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                40,
+                                                133,
+                                                1177,
+                                                630
+                                            ],
+                                            "type": "table",
+                                            "html": "<table><tr><td>Dimension</td><td>改造前</td><td>改造后</td></tr><tr><td>开发效率</td><td>重度依赖人工经验</td><td>AI辅助、效率大幅提升且质量高度稳定</td></tr><tr><td>资产积累</td><td>代码文档脱节、隐性流失</td><td>自动持续积累、全程可追溯、高度可复用</td></tr><tr><td>服务一致性</td><td>临时口径泛滥</td><td>严格按数仓资产口径输出，指标统一、语义一致、治理可审计</td></tr><tr><td>供给灵活性</td><td>单一且固化的供给模式</td><td>灵活高效的双轨供给机制（分钟级API+稳定的OSS文件传输）</td></tr></table>",
+                                            "image_path": "https://cdn-mineru.openxlab.org.cn/result/2026-03-05/dcec1c08-5e7e-4201-9a51-b162d4108027/b7213f202a9157b0c87b45e179eaf0e563410b56dbe981e27e0a7a2ca9f78eea.jpg"
+                                        }
+                                    ]
+                                }
+                            ],
+                            "index": 1,
+                            "angle": 0,
+                            "type": "table_body"
+                        }
+                    ],
+                    "index": 1
+                }
+            ],
+            "discarded_blocks": [
+                {
+                    "bbox": [
+                        1019,
+                        645,
+                        1216,
+                        674
+                    ],
+                    "type": "footer",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                1019,
+                                645,
+                                1216,
+                                674
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        1019,
+                                        645,
+                                        1216,
+                                        674
+                                    ],
+                                    "type": "text",
+                                    "content": "开发→资产 NotebookLM"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 2
+                }
+            ],
+            "page_size": [
+                1218,
+                681
+            ],
+            "page_idx": 0
+        }
+    ],
+    "_backend": "hybrid",
+    "_ocr_enable": true,
+    "_vlm_ocr_enable": true,
+    "_version_name": "2.7.6"
+}

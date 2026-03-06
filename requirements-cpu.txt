@@ -1,0 +1,14 @@
+python-pptx
+PyMuPDF
+opencv-python
+numpy
+Pillow
+tkinterdnd2
+pyinstaller
+scikit-image
+paddleocr
+paddlepaddle==3.3.0
+requests>=2.32.3
+urllib3<2.0
+charset_normalizer<4
+chardet<6

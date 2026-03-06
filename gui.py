@@ -183,7 +183,12 @@ class AddTaskDialog(tk.Toplevel):
         if not all([input_f, json_f, output_f]):
             messagebox.showerror(self.i18n['error_title'], self.i18n['error_all_paths'], parent=self)
             return
-        self.result = {"input": input_f, "json": json_f, "output": output_f, "remove_watermark": self.remove_watermark.get()}
+        self.result = {
+            "input": input_f,
+            "json": json_f,
+            "output": output_f,
+            "remove_watermark": self.remove_watermark.get(),
+        }
         self.destroy()
 
 class App(TkinterDnD.Tk):
@@ -197,6 +202,7 @@ class App(TkinterDnD.Tk):
         self.remove_watermark, self.generate_debug = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
         self.batch_mode = tk.BooleanVar(value=False)
         self.task_list = []
+        self.shared_ocr_engine = None
         self.log_queue = queue.Queue()
         self.queue_handler = QueueHandler(self.log_queue)
         self._create_widgets()
@@ -305,7 +311,10 @@ class App(TkinterDnD.Tk):
         if dialog.result:
             task = dialog.result
             self.task_list.append(task)
-            suffix = "" if task['remove_watermark'] else " (Keep WM)"
+            suffix_parts = []
+            if not task['remove_watermark']:
+                suffix_parts.append("Keep WM")
+            suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
             self.task_listbox.insert(tk.END, f"IN: {os.path.basename(task['input'])} -> OUT: {os.path.basename(task['output'])}{suffix}")
 
     def _delete_task(self):
@@ -403,8 +412,18 @@ class App(TkinterDnD.Tk):
             self.after(0, self._finalize_gui, success)
 
     def _run_single_conversion(self, json_path, input_path, output_path):
-        args = (json_path, input_path, output_path, self.remove_watermark.get(), self.generate_debug.get())
-        convert_mineru_to_ppt(*args)
+        if self.shared_ocr_engine is None:
+            from converter.ocr_merge import PaddleOCREngine
+            self.shared_ocr_engine = PaddleOCREngine(device_policy="auto", offline_only=True)
+
+        args = (
+            json_path,
+            input_path,
+            output_path,
+            self.remove_watermark.get(),
+            self.generate_debug.get(),
+        )
+        convert_mineru_to_ppt(*args, ocr_engine=self.shared_ocr_engine)
         self.log_queue.put(self.i18n['log_success'])
 
     def _run_batch_conversion(self):
@@ -414,8 +433,18 @@ class App(TkinterDnD.Tk):
             self.log_queue.put(self.i18n['log_task_start'].format(i + 1, total_tasks, os.path.basename(task['input'])))
             try:
                 # Debug images are disabled for batch mode
-                args = (task['json'], task['input'], task['output'], task['remove_watermark'], False)
-                convert_mineru_to_ppt(*args)
+                args = (
+                    task['json'],
+                    task['input'],
+                    task['output'],
+                    task['remove_watermark'],
+                    False,
+                )
+                if self.shared_ocr_engine is None:
+                    from converter.ocr_merge import PaddleOCREngine
+                    self.shared_ocr_engine = PaddleOCREngine(device_policy="auto", offline_only=True)
+
+                convert_mineru_to_ppt(*args, ocr_engine=self.shared_ocr_engine)
                 self.log_queue.put(self.i18n['log_task_complete'].format(os.path.basename(task['input'])))
             except Exception as e:
                 self.log_queue.put(self.i18n['log_error'].format(e))

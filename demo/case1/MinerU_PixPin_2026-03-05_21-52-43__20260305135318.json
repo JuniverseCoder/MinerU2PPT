@@ -1,0 +1,163 @@
+{
+    "pdf_info": [
+        {
+            "para_blocks": [
+                {
+                    "bbox": [
+                        65,
+                        167,
+                        1099,
+                        244
+                    ],
+                    "type": "title",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                65,
+                                167,
+                                1099,
+                                244
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        65,
+                                        167,
+                                        1099,
+                                        244
+                                    ],
+                                    "type": "text",
+                                    "content": "基于AI的声明式数据开发新范式"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 0
+                },
+                {
+                    "bbox": [
+                        74,
+                        265,
+                        731,
+                        312
+                    ],
+                    "type": "text",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                74,
+                                265,
+                                731,
+                                312
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        74,
+                                        265,
+                                        731,
+                                        312
+                                    ],
+                                    "type": "text",
+                                    "content": "Design as Code, Asset as Service"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 1
+                },
+                {
+                    "type": "image",
+                    "bbox": [
+                        67,
+                        354,
+                        1151,
+                        633
+                    ],
+                    "blocks": [
+                        {
+                            "bbox": [
+                                67,
+                                354,
+                                1151,
+                                633
+                            ],
+                            "lines": [
+                                {
+                                    "bbox": [
+                                        67,
+                                        354,
+                                        1151,
+                                        633
+                                    ],
+                                    "spans": [
+                                        {
+                                            "bbox": [
+                                                67,
+                                                354,
+                                                1151,
+                                                633
+                                            ],
+                                            "type": "image",
+                                            "image_path": "https://cdn-mineru.openxlab.org.cn/result/2026-03-05/35978bf0-f468-4a96-9d72-c4f475fc440f/bc8a06c10dd0d23416d27a6817d1be66f05253d85e4284f5ee7368649ab84be2.jpg"
+                                        }
+                                    ]
+                                }
+                            ],
+                            "index": 2,
+                            "angle": 0,
+                            "type": "image_body"
+                        }
+                    ],
+                    "index": 2
+                }
+            ],
+            "discarded_blocks": [
+                {
+                    "bbox": [
+                        1125,
+                        658,
+                        1214,
+                        671
+                    ],
+                    "type": "footer",
+                    "angle": 0,
+                    "lines": [
+                        {
+                            "bbox": [
+                                1125,
+                                658,
+                                1214,
+                                671
+                            ],
+                            "spans": [
+                                {
+                                    "bbox": [
+                                        1125,
+                                        658,
+                                        1214,
+                                        671
+                                    ],
+                                    "type": "text",
+                                    "content": "NotebookLM"
+                                }
+                            ]
+                        }
+                    ],
+                    "index": 3
+                }
+            ],
+            "page_size": [
+                1219,
+                680
+            ],
+            "page_idx": 0
+        }
+    ],
+    "_backend": "hybrid",
+    "_ocr_enable": true,
+    "_vlm_ocr_enable": true,
+    "_version_name": "2.7.6"
+}

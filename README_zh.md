@@ -8,9 +8,11 @@
 
 ## 用户指南：如何使用
 
-作为普通用户，您只需要独立的 `MinerU2PPT.exe` 文件。您无需安装 Python 或任何编程库。
+作为普通用户，您只需要下载发布包（CPU 或 GPU 版本）。您无需安装 Python 或任何编程库。
 
-1.  **下载应用程序**: 从本项目的 [Releases 页面](https://github.com/YOUR_USERNAME/YOUR_REPO/releases) 下载最新的 `.exe` 可执行文件。
+1.  **下载应用程序**: 从本项目的 [Releases 页面](https://github.com/YOUR_USERNAME/YOUR_REPO/releases) 下载最新发布包。
+    -   `MinerU2PPT-win64-cpu.zip`：CPU 版本（默认推荐）。
+    -   `MinerU2PPT-win64-gpu-cu118.zip`：CUDA 11.8 GPU 版本。
 
 2.  **获取 MinerU JSON 文件**:
     -   访问 [MinerU PDF/图片提取器](https://mineru.net/OpenSourceTools/Extractor)。
@@ -68,27 +70,46 @@
     ```
 -   **使用命令行界面 (CLI)**:
     ```bash
-    python main.py --json <json文件路径> --pdf <pdf文件路径> --output <ppt输出路径> [OPTIONS]
+    python main.py --json <json文件路径> --input <pdf或图片路径> --output <ppt输出路径> [OPTIONS]
     ```
 
-### 打包为独立可执行文件 (.exe)
+#### OCR 相关 CLI 参数
 
-您可以将此 GUI 应用打包成单个 `.exe` 文件，方便分发给没有安装 Python 环境的 Windows 用户。
+-   `--ocr-device {auto,gpu,cpu}`：OCR 设备策略，默认 `auto`（`gpu -> cpu` 回退）。
+-   `--ocr-model-root <path>`：可选，本地 PaddleOCR 模型根目录。
+
+示例：
+```bash
+python main.py --json "demo/case1/MinerU_xxx.json" --input "demo/case1/PixPin_xxx.png" --output "out.pptx" --ocr-device auto --ocr-model-root "models/paddleocr"
+```
+
+### 打包为 Windows 独立应用
+
+本项目现推荐使用 **onedir/安装包风格**，而不是 onefile，稳定性更好，也更适合离线模型分发。
 
 1.  **安装 PyInstaller**:
     ```bash
     pip install pyinstaller
     ```
 
-2.  **构建可执行文件**:
-    在项目根目录运行 `pyinstaller` 命令。使用 `--name` 参数为您的应用指定一个专业的名称。
-    -   `--windowed`: 防止在运行时出现后台控制台窗口。
-    -   `--onefile`: 将所有内容打包到单个可执行文件中。
-    -   `--name`: 设置最终生成的可执行文件的名称。
+2.  **准备本地 OCR 模型（离线优先）**:
+    模型根目录解析优先级为：
+    1. CLI/引擎参数 `model_root`
+    2. 环境变量 `MINERU_OCR_MODEL_ROOT`
+    3. 可执行目录 `models/paddleocr`
+    4. 源码目录 `models/paddleocr`
 
-    ```bash
-    pyinstaller --windowed --onefile --name MinerU2PPT gui.py
+    目录结构要求：
+    ```
+    models/paddleocr/<lang>/det
+    models/paddleocr/<lang>/rec
+    models/paddleocr/<lang>/cls
     ```
 
-3.  **找到可执行文件**:
-    命令执行完毕后，您将在 `dist` 文件夹中找到独立的应用文件：`MinerU2PPT.exe`。
+3.  **构建 onedir 包**:
+    ```bash
+    pyinstaller --clean gui.spec
+    ```
+
+4.  **查看构建产物**:
+    产物目录位于 `dist/MinerU2PPT/`。

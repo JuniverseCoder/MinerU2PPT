@@ -10,9 +10,11 @@ The application features a user-friendly graphical interface (GUI) and is design
 
 ## For Users: How to Use
 
-As a user, you only need the standalone executable file (e.g., `MinerU2PPT.exe`). You do not need to install Python or any libraries.
+As a user, you only need the packaged Windows release (CPU or GPU variant). You do not need to install Python or any libraries.
 
-1.  **Download the Application**: Get the latest executable from the project's [Releases page](https://github.com/YOUR_USERNAME/YOUR_REPO/releases).
+1.  **Download the Application**: Get the latest package from the project's [Releases page](https://github.com/YOUR_USERNAME/YOUR_REPO/releases).
+    -   `MinerU2PPT-win64-cpu.zip`: CPU-only package (recommended default).
+    -   `MinerU2PPT-win64-gpu-cu118.zip`: CUDA 11.8 GPU package.
 
 2.  **Get the MinerU JSON File**:
     -   Go to the [MinerU PDF/Image Extractor](https://mineru.net/OpenSourceTools/Extractor).
@@ -70,27 +72,46 @@ This section provides instructions for running the application from source and p
     ```
 -   **To use the CLI**:
     ```bash
-    python main.py --json <path_to_json> --pdf <path_to_pdf> --output <path_to_ppt> [OPTIONS]
+    python main.py --json <path_to_json> --input <path_to_pdf_or_image> --output <path_to_ppt> [OPTIONS]
     ```
 
-### Packaging as a Standalone Executable (.exe)
+#### OCR CLI Options
 
-You can package the GUI application into a single `.exe` file for easy distribution.
+-   `--ocr-device {auto,gpu,cpu}`: OCR device policy. Default is `auto` (`gpu -> cpu` fallback).
+-   `--ocr-model-root <path>`: Optional local PaddleOCR model root.
+
+Example:
+```bash
+python main.py --json "demo/case1/MinerU_xxx.json" --input "demo/case1/PixPin_xxx.png" --output "out.pptx" --ocr-device auto --ocr-model-root "models/paddleocr"
+```
+
+### Packaging as a Standalone Executable (Windows)
+
+This project now recommends **onedir/installer-style packaging** over onefile for better runtime stability and easier model deployment.
 
 1.  **Install PyInstaller**:
     ```bash
     pip install pyinstaller
     ```
 
-2.  **Build the Executable**:
-    Run the `pyinstaller` command from the project's root directory. Use the `--name` flag to specify a professional name for your application.
-    -   `--windowed`: Prevents a console window from appearing in the background.
-    -   `--onefile`: Bundles everything into a single executable file.
-    -   `--name`: Sets the name of the final executable.
+2.  **Prepare Local OCR Models (offline-first)**:
+    Put local models under one of the supported roots (priority order):
+    1. CLI/engine `model_root`
+    2. environment variable `MINERU_OCR_MODEL_ROOT`
+    3. executable directory `models/paddleocr`
+    4. source repository `models/paddleocr`
 
-    ```bash
-    pyinstaller --windowed --onefile --name MinerU2PPT gui.py
+    Directory layout:
+    ```
+    models/paddleocr/<lang>/det
+    models/paddleocr/<lang>/rec
+    models/paddleocr/<lang>/cls
     ```
 
-3.  **Find the Executable**:
-    Your standalone application, `MinerU2PPT.exe`, will be located in the `dist` folder.
+3.  **Build the onedir package**:
+    ```bash
+    pyinstaller --clean gui.spec
+    ```
+
+4.  **Find build output**:
+    The packaged app directory will be generated under `dist/MinerU2PPT/`.
