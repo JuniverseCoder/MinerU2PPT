@@ -1,0 +1,6 @@
+# Full development environment for CPU:
+# - Runtime dependencies (CPU variant)
+# - Build tooling
+
+-r requirements-cpu.txt
+-r requirements-build.txt

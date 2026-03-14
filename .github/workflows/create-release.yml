@@ -22,10 +22,20 @@ jobs:
         include:
           - variant: cpu
             requirements_file: requirements-cpu.txt
-            asset_name: MinerU2PPT-win64-cpu.zip
+            output_base_name: MinerU2PPT-win64-cpu-setup
+            asset_name: MinerU2PPT-win64-cpu-setup.exe
           - variant: gpu-cu118
             requirements_file: requirements-gpu-cu118.txt
-            asset_name: MinerU2PPT-win64-gpu-cu118.zip
+            output_base_name: MinerU2PPT-win64-gpu-cu118-setup
+            asset_name: MinerU2PPT-win64-gpu-cu118-setup.exe
+          - variant: gpu-cu126
+            requirements_file: requirements-gpu-cu126.txt
+            output_base_name: MinerU2PPT-win64-gpu-cu126-setup
+            asset_name: MinerU2PPT-win64-gpu-cu126-setup.exe
+          - variant: gpu-cu129
+            requirements_file: requirements-gpu-cu129.txt
+            output_base_name: MinerU2PPT-win64-gpu-cu129-setup
+            asset_name: MinerU2PPT-win64-gpu-cu129-setup.exe
 
     steps:
       - name: Checkout code
@@ -41,21 +51,26 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r ${{ matrix.requirements_file }}
+          # Runtime deps come from matrix requirements file (CPU/GPU).
+          # Build deps are isolated in requirements-build.txt.
+          pip install -r ${{ matrix.requirements_file }} -r requirements-build.txt
 
       - name: Build onedir package with PyInstaller spec
-        run: pyinstaller --clean gui.spec
+        run: pyinstaller --clean -y gui.spec
 
-      - name: Archive onedir output
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
         run: |
-          Compress-Archive -Path dist/MinerU2PPT/* -DestinationPath dist/${{ matrix.asset_name }} -Force
+          iscc installer.iss /DMyAppVersion=${{ github.ref_name }} /DOutputBaseFilename=${{ matrix.output_base_name }}
         shell: pwsh
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
-          path: dist/${{ matrix.asset_name }}
+          path: installer-output/${{ matrix.asset_name }}
           if-no-files-found: error
 
   release:
@@ -75,6 +90,6 @@ jobs:
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/*.zip
+          files: dist/**/*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

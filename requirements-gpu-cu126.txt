@@ -1,0 +1,11 @@
+# Runtime dependencies for CUDA 12.6 GPU build (minimal for packaged app)
+# Install with:
+# python -m pip install -r requirements-gpu-cu126.txt
+#
+# Equivalent explicit command:
+# python -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
+
+-r requirements-runtime-common.txt
+paddlepaddle-gpu==3.3.0

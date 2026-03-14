@@ -1,4 +1,4 @@
-# CUDA 11.8 GPU build for PaddlePaddle.
+# Runtime dependencies for CUDA 11.8 GPU build (minimal for packaged app)
 # Install with:
 # python -m pip install -r requirements-gpu-cu118.txt
 #
@@ -7,17 +7,5 @@
 
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu118/
 
-python-pptx
-PyMuPDF
-opencv-python
-numpy
-Pillow
-tkinterdnd2
-pyinstaller
-scikit-image
-paddleocr
+-r requirements-runtime-common.txt
 paddlepaddle-gpu==3.3.0
-requests>=2.32.3
-urllib3<2.0
-charset_normalizer<4
-chardet<6

@@ -1,0 +1,8 @@
+# Shared runtime dependencies for app execution (CPU/GPU common)
+python-pptx
+PyMuPDF
+opencv-python
+numpy
+Pillow
+tkinterdnd2
+paddleocr==3.4.0
