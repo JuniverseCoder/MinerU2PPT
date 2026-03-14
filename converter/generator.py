@@ -727,6 +727,7 @@ class PPTGenerator:
             order=list(image_elem.order),
             style=dict(image_elem.style),
             is_discarded=image_elem.is_discarded,
+            is_watermark=image_elem.is_watermark,
             group_id=image_elem.group_id,
             text_elements=list(image_elem.text_elements),
             crop_pixels=crop,
@@ -789,14 +790,14 @@ class PPTGenerator:
         image_elements = [e for e in elements if isinstance(e, ImageIR)]
 
         cleanup_text_elements = [
-            e for e in text_elements if (not e.is_discarded) or self.remove_watermark
+            e for e in text_elements if (not e.is_watermark) or self.remove_watermark
         ]
         cleanup_image_elements = [
-            e for e in image_elements if (not e.is_discarded) or self.remove_watermark
+            e for e in image_elements if (not e.is_watermark) or self.remove_watermark
         ]
 
         render_image_elements = [
-            e for e in image_elements if not (e.is_discarded and self.remove_watermark)
+            e for e in image_elements if not (e.is_watermark and self.remove_watermark)
         ]
 
         render_images_with_crop = [
@@ -807,6 +808,7 @@ class PPTGenerator:
                 order=list(elem.order),
                 style=dict(elem.style),
                 is_discarded=elem.is_discarded,
+                is_watermark=elem.is_watermark,
                 group_id=elem.group_id,
                 text_elements=list(elem.text_elements),
                 crop_pixels=self._prepare_image_crop(context, elem),
@@ -823,7 +825,7 @@ class PPTGenerator:
         elements = self._normalize_page_text_font_sizes(elements)
         text_elements = [e for e in elements if isinstance(e, TextIR)]
         render_text_elements = [
-            e for e in text_elements if not (e.is_discarded and self.remove_watermark)
+            e for e in text_elements if not (e.is_watermark and self.remove_watermark)
         ]
 
         for image_elem in cleanup_image_elements:

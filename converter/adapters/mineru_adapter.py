@@ -29,43 +29,103 @@ class MinerUPageData:
 class MinerUAdapter:
     """Map MinerU page data object into unified IR elements."""
 
+    @staticmethod
+    def _extract_is_watermark(item: dict[str, Any], fallback: bool = False) -> bool:
+        raw_value = item.get("is_watermark")
+        if raw_value is None:
+            raw_value = item.get("watermark")
+
+        if raw_value is None:
+            return bool(fallback)
+
+        if isinstance(raw_value, str):
+            return raw_value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(raw_value)
+
     def extract_page_elements(self, page_data: MinerUPageData, include_text_runs: bool = False) -> list[ElementIR]:
         elements: list[ElementIR] = []
 
         for item in page_data.para_blocks:
-            elements.extend(self._to_ir_elements(item, is_discarded=False, include_text_runs=include_text_runs))
+            elements.extend(
+                self._to_ir_elements(
+                    item,
+                    is_discarded=False,
+                    is_watermark=self._extract_is_watermark(item, fallback=False),
+                    include_text_runs=include_text_runs,
+                )
+            )
 
         for item in page_data.images:
-            elements.extend(self._to_ir_elements(item, is_discarded=False, include_text_runs=include_text_runs))
+            elements.extend(
+                self._to_ir_elements(
+                    item,
+                    is_discarded=False,
+                    is_watermark=self._extract_is_watermark(item, fallback=False),
+                    include_text_runs=include_text_runs,
+                )
+            )
 
         for item in page_data.tables:
-            elements.extend(self._to_ir_elements(item, is_discarded=False, include_text_runs=include_text_runs))
+            elements.extend(
+                self._to_ir_elements(
+                    item,
+                    is_discarded=False,
+                    is_watermark=self._extract_is_watermark(item, fallback=False),
+                    include_text_runs=include_text_runs,
+                )
+            )
 
         for item in page_data.discarded_blocks:
-            elements.extend(self._to_ir_elements(item, is_discarded=True, include_text_runs=include_text_runs))
+            elements.extend(
+                self._to_ir_elements(
+                    item,
+                    is_discarded=True,
+                    is_watermark=self._extract_is_watermark(item, fallback=True),
+                    include_text_runs=include_text_runs,
+                )
+            )
 
         return elements
 
-    def _to_ir_elements(self, item: dict[str, Any], is_discarded: bool, include_text_runs: bool = False) -> list[ElementIR]:
+    def _to_ir_elements(
+        self,
+        item: dict[str, Any],
+        is_discarded: bool,
+        is_watermark: bool,
+        include_text_runs: bool = False,
+    ) -> list[ElementIR]:
         if not item or not item.get("bbox"):
             return []
 
         elem_type = item.get("type", "text")
         if elem_type == "list":
-            return self._list_to_text_elements(item, is_discarded, include_text_runs=include_text_runs)
+            return self._list_to_text_elements(item, is_discarded, is_watermark, include_text_runs=include_text_runs)
 
         if elem_type in IMAGE_TYPES:
-            return self._image_like_to_elements(item, is_discarded, include_text_runs=include_text_runs)
+            return self._image_like_to_elements(item, is_discarded, is_watermark, include_text_runs=include_text_runs)
 
         if elem_type in TEXT_TYPES:
-            return [self._text_element_from_block(item, is_discarded, include_text_runs=include_text_runs)]
+            return [self._text_element_from_block(item, is_discarded, is_watermark, include_text_runs=include_text_runs)]
 
-        return [self._text_element_from_block(item, is_discarded, include_text_runs=include_text_runs)]
+        return [self._text_element_from_block(item, is_discarded, is_watermark, include_text_runs=include_text_runs)]
 
-    def _list_to_text_elements(self, item: dict[str, Any], is_discarded: bool, include_text_runs: bool = False) -> list[TextIR]:
+    def _list_to_text_elements(
+        self,
+        item: dict[str, Any],
+        is_discarded: bool,
+        is_watermark: bool,
+        include_text_runs: bool = False,
+    ) -> list[TextIR]:
         blocks = item.get("blocks") or []
         if not blocks:
-            return [self._text_element_from_block(item, is_discarded, include_text_runs=include_text_runs)]
+            return [
+                self._text_element_from_block(
+                    item,
+                    is_discarded,
+                    is_watermark,
+                    include_text_runs=include_text_runs,
+                )
+            ]
 
         group_id = item.get("group_id") or f"mineru-list-{item.get('index', 0)}"
         converted: list[TextIR] = []
@@ -76,6 +136,7 @@ class MinerUAdapter:
                 self._text_element_from_block(
                     block,
                     is_discarded=is_discarded,
+                    is_watermark=is_watermark,
                     group_id=group_id,
                     force_bold=False,
                     include_text_runs=include_text_runs,
@@ -83,7 +144,13 @@ class MinerUAdapter:
             )
         return converted
 
-    def _image_like_to_elements(self, item: dict[str, Any], is_discarded: bool, include_text_runs: bool = False) -> list[ElementIR]:
+    def _image_like_to_elements(
+        self,
+        item: dict[str, Any],
+        is_discarded: bool,
+        is_watermark: bool,
+        include_text_runs: bool = False,
+    ) -> list[ElementIR]:
         results: list[ElementIR] = []
         blocks = item.get("blocks") or []
 
@@ -94,11 +161,14 @@ class MinerUAdapter:
                 image_bbox = block["bbox"]
                 break
 
+        effective_is_watermark = self._extract_is_watermark(item, fallback=is_watermark)
+
         image_element = {
             "type": "image",
             "bbox": image_bbox,
             "source": "mineru",
             "is_discarded": is_discarded,
+            "is_watermark": effective_is_watermark,
             "group_id": item.get("group_id"),
             "order": [image_bbox[1], image_bbox[0]] if image_bbox else None,
             "style": {},
@@ -115,6 +185,7 @@ class MinerUAdapter:
                     self._text_element_from_block(
                         block,
                         is_discarded=is_discarded,
+                        is_watermark=is_watermark,
                         group_id=item.get("group_id"),
                         force_bold=False,
                         include_text_runs=include_text_runs,
@@ -127,6 +198,7 @@ class MinerUAdapter:
         self,
         block: dict[str, Any],
         is_discarded: bool,
+        is_watermark: bool,
         group_id: str | None = None,
         force_bold: bool | None = None,
         include_text_runs: bool = False,
@@ -140,6 +212,7 @@ class MinerUAdapter:
 
         bbox = block.get("bbox")
         text_runs = self._build_text_runs_from_block(block) if include_text_runs else None
+        effective_is_watermark = self._extract_is_watermark(block, fallback=is_watermark)
 
         element = {
             "type": "text",
@@ -150,6 +223,7 @@ class MinerUAdapter:
             "text_runs": text_runs,
             "source": "mineru",
             "is_discarded": is_discarded,
+            "is_watermark": effective_is_watermark,
             "group_id": group_id or block.get("group_id"),
             "order": [bbox[1], bbox[0]] if bbox else None,
             "style": style,

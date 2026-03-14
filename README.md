@@ -13,8 +13,10 @@ The application features a user-friendly graphical interface (GUI) and is design
 As a user, you only need the packaged Windows release (CPU or GPU variant). You do not need to install Python or any libraries.
 
 1.  **Download the Application**: Get the latest package from the project's [Releases page](https://github.com/YOUR_USERNAME/YOUR_REPO/releases).
-    -   `MinerU2PPT-win64-cpu.zip`: CPU-only package (recommended default).
-    -   `MinerU2PPT-win64-gpu-cu118.zip`: CUDA 11.8 GPU package.
+    -   `MinerU2PPT-win64-cpu-setup.exe`: CPU-only package (recommended default).
+    -   `MinerU2PPT-win64-gpu-cu118-setup.exe`: CUDA 11.8 GPU package.
+    -   `MinerU2PPT-win64-gpu-cu126-setup.exe`: CUDA 12.6 GPU package.
+    -   `MinerU2PPT-win64-gpu-cu129-setup.exe`: CUDA 12.9 GPU package.
 
 2.  **Get the MinerU JSON File**:
     -   Go to the [MinerU PDF/Image Extractor](https://mineru.net/OpenSourceTools/Extractor).
@@ -59,10 +61,23 @@ This section provides instructions for running the application from source and p
     python -m venv venv
     source venv/bin/activate  # On Windows: venv\Scripts\activate
     ```
-3.  Install the required dependencies from `requirements.txt`.
-    ```bash
-    pip install -r requirements.txt
-    ```
+3.  Install dependencies based on your development target.
+    -   **Default (GPU CUDA 11.8 full dev)**:
+        ```bash
+        pip install -r requirements.txt
+        ```
+    -   **GPU CUDA 12.6 full dev**:
+        ```bash
+        pip install -r requirements-gpu-cu126.txt -r requirements-build.txt
+        ```
+    -   **GPU CUDA 12.9 full dev**:
+        ```bash
+        pip install -r requirements-gpu-cu129.txt -r requirements-build.txt
+        ```
+    -   **CPU full dev (for CI/other contributors)**:
+        ```bash
+        pip install -r requirements-dev-cpu.txt
+        ```
 
 ### Running from Source
 
@@ -142,6 +157,8 @@ This project now recommends **onedir/installer-style packaging** over onefile fo
 - Core flow docs:
   - `docs/core-flow/font-size-normalization-pre-render.md`
   - `docs/core-flow/ocr-bbox-xy-refine-flow.md`
+  - `docs/core-flow/watermark-ir-removal-flow.md`
 - Testing docs:
   - `docs/testing/font-size-normalization-testing.md`
   - `docs/testing/ocr-bbox-refine-testing.md`
+  - `docs/testing/watermark-ir-removal-testing.md`

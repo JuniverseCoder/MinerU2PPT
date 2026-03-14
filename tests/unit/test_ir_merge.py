@@ -11,6 +11,7 @@ def _text(
     group_id=None,
     source="mineru",
     bold=False,
+    is_watermark=False,
     order=None,
     lines=None,
 ):
@@ -30,6 +31,7 @@ def _text(
         order=[float(v) for v in (order or [bbox[1], bbox[0]])],
         style={"bold": bold, "font_size": None, "align": "left"},
         is_discarded=False,
+        is_watermark=is_watermark,
         source=source,
         lines=lines,
     )
@@ -72,6 +74,14 @@ class TestIRMerge(unittest.TestCase):
         self.assertEqual(merged[0].text, "ocr")
         self.assertTrue(merged[0].style["bold"])
         self.assertTrue(merged[0].text_runs[0].style["bold"])
+
+    def test_overlap_replacement_inherits_watermark_from_base(self):
+        base = [_text([10, 10, 40, 30], "old", source="mineru", is_watermark=True)]
+        overlay = [_text([20, 20, 50, 35], "new", source="ocr", is_watermark=False)]
+
+        merged, _ = merge_ir_elements(base, overlay)
+        self.assertEqual(len(merged), 1)
+        self.assertTrue(merged[0].is_watermark)
 
     def test_non_overlapping_overlay_is_appended(self):
         base = [_text([10, 10, 40, 30], "old", source="mineru")]

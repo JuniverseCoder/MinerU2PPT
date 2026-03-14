@@ -170,6 +170,7 @@ class OCRAdapter:
             "text_runs": text_runs,
             "source": "ocr",
             "is_discarded": False,
+            "is_watermark": False,
             "group_id": elem.get("group_id"),
             "order": [bbox[1], bbox[0]],
             "style": {

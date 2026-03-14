@@ -209,6 +209,8 @@ def _inherit_overlay_bold_from_base(
         overlay_elem,
         style=merged_style,
         text_runs=merged_runs,
+        is_discarded=bool(base_elem.is_discarded or overlay_elem.is_discarded),
+        is_watermark=bool(base_elem.is_watermark or overlay_elem.is_watermark),
     )
 
 

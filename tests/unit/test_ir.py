@@ -26,6 +26,20 @@ class TestIR(unittest.TestCase):
         self.assertEqual(normalized.bbox, [20.0, 10.0, 60.0, 40.0])
         self.assertEqual(normalized.order, [10.0, 20.0])
         self.assertEqual(normalized.style["align"], "left")
+        self.assertFalse(normalized.is_watermark)
+
+    def test_normalize_text_element_with_watermark_flag(self):
+        elem = {
+            "type": "text",
+            "bbox": [20, 10, 60, 40],
+            "text": "hello",
+            "source": "mineru",
+            "is_watermark": True,
+        }
+
+        normalized = normalize_element_ir(elem)
+        self.assertIsInstance(normalized, TextIR)
+        self.assertTrue(normalized.is_watermark)
 
     def test_normalize_style_minimum_fields(self):
         style = normalize_style({"bold": 1, "font_size": "18", "align": "CENTER"})

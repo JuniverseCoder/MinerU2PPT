@@ -24,6 +24,7 @@ class TextIR:
     order: list[float]
     style: dict[str, Any]
     is_discarded: bool = False
+    is_watermark: bool = False
     group_id: str | None = None
     text_runs: list[TextRunIR] | None = None
     lines: list[dict[str, Any]] | None = None
@@ -37,6 +38,7 @@ class ImageIR:
     order: list[float]
     style: dict[str, Any]
     is_discarded: bool = False
+    is_watermark: bool = False
     group_id: str | None = None
     text_elements: list[TextIR] = field(default_factory=list)
     crop_pixels: Any | None = None
@@ -365,6 +367,7 @@ def normalize_element_ir(element: Any) -> ElementIR:
             order=[float(element.order[0]), float(element.order[1])] if len(element.order) >= 2 else _fallback_order(normalized_bbox),
             style=normalize_style(element.style),
             is_discarded=bool(element.is_discarded),
+            is_watermark=bool(getattr(element, "is_watermark", False)),
             group_id=str(element.group_id) if element.group_id is not None else None,
             text_runs=text_runs,
             lines=normalized_lines,
@@ -382,6 +385,7 @@ def normalize_element_ir(element: Any) -> ElementIR:
             order=[float(element.order[0]), float(element.order[1])] if len(element.order) >= 2 else _fallback_order(normalize_bbox(element.bbox)),
             style=normalize_style(element.style),
             is_discarded=bool(element.is_discarded),
+            is_watermark=bool(getattr(element, "is_watermark", False)),
             group_id=str(element.group_id) if element.group_id is not None else None,
             text_elements=_normalize_image_text_elements(element.text_elements),
             crop_pixels=element.crop_pixels,
@@ -406,6 +410,7 @@ def normalize_element_ir(element: Any) -> ElementIR:
     source = str(element.get("source", "unknown"))
     group_id = element.get("group_id")
     is_discarded = bool(element.get("is_discarded", False))
+    is_watermark = bool(element.get("is_watermark", False))
 
     if elem_type == "text":
         has_text_runs_key = "text_runs" in element
@@ -432,6 +437,7 @@ def normalize_element_ir(element: Any) -> ElementIR:
             order=order,
             style=style,
             is_discarded=is_discarded,
+            is_watermark=is_watermark,
             group_id=str(group_id) if group_id is not None else None,
             text_runs=text_runs,
             lines=_normalize_lines(element.get("lines"), bbox),
@@ -449,6 +455,7 @@ def normalize_element_ir(element: Any) -> ElementIR:
         order=order,
         style=style,
         is_discarded=is_discarded,
+        is_watermark=is_watermark,
         group_id=str(group_id) if group_id is not None else None,
         text_elements=_normalize_image_text_elements(element.get("text_elements", [])),
         crop_pixels=element.get("crop_pixels"),

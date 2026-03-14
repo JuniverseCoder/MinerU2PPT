@@ -1,9 +1,10 @@
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from converter.generator import PPTGenerator
-from converter.ir import ImageIR, TextIR
+from converter.ir import ImageIR, TextIR, normalize_element_ir
 
 
 class _Context:
@@ -59,6 +60,48 @@ class TestGeneratorCleanupOrder(unittest.TestCase):
         # text -> image cleanup should produce a new image IR instance
         self.assertIsNot(cleaned_images[0], image_elem)
         self.assertEqual(cleaned_images[0].bbox, image_elem.bbox)
+
+    def test_render_filters_drop_watermark_text(self):
+        generator = PPTGenerator("out.pptx", remove_watermark=True)
+        slide = generator.add_slide()
+        page_image = np.zeros((200, 200, 3), dtype=np.uint8)
+
+        elements = [
+            normalize_element_ir(
+                {
+                    "type": "text",
+                    "bbox": [10, 10, 40, 30],
+                    "text": "keep",
+                    "source": "mineru",
+                    "is_discarded": True,
+                    "is_watermark": False,
+                }
+            ),
+            normalize_element_ir(
+                {
+                    "type": "text",
+                    "bbox": [10, 40, 40, 60],
+                    "text": "drop",
+                    "source": "mineru",
+                    "is_discarded": False,
+                    "is_watermark": True,
+                }
+            ),
+        ]
+
+        rendered = []
+
+        def _capture(context, elem):
+            rendered.append(elem.text)
+
+        with (
+            mock.patch.object(generator, "_process_text", side_effect=_capture),
+            mock.patch("converter.generator.PageContext.render_to_slide", return_value=None),
+        ):
+            generator.process_page(slide, elements, page_image, page_size=(200, 200), page_index=0, debug_images=False)
+
+        self.assertIn("keep", rendered)
+        self.assertNotIn("drop", rendered)
 
 
 if __name__ == "__main__":

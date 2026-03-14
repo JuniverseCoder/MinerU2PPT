@@ -11,8 +11,10 @@
 作为普通用户，您只需要下载发布包（CPU 或 GPU 版本）。您无需安装 Python 或任何编程库。
 
 1.  **下载应用程序**: 从本项目的 [Releases 页面](https://github.com/YOUR_USERNAME/YOUR_REPO/releases) 下载最新发布包。
-    -   `MinerU2PPT-win64-cpu.zip`：CPU 版本（默认推荐）。
-    -   `MinerU2PPT-win64-gpu-cu118.zip`：CUDA 11.8 GPU 版本。
+    -   `MinerU2PPT-win64-cpu-setup.exe`：CPU 版本（默认推荐）。
+    -   `MinerU2PPT-win64-gpu-cu118-setup.exe`：CUDA 11.8 GPU 版本。
+    -   `MinerU2PPT-win64-gpu-cu126-setup.exe`：CUDA 12.6 GPU 版本。
+    -   `MinerU2PPT-win64-gpu-cu129-setup.exe`：CUDA 12.9 GPU 版本。
 
 2.  **获取 MinerU JSON 文件**:
     -   访问 [MinerU PDF/图片提取器](https://mineru.net/OpenSourceTools/Extractor)。
@@ -26,7 +28,7 @@
     -   **选择 JSON 文件**: 将您从 MinerU 下载的 JSON 文件拖拽到第二个输入框中。
     -   **输出路径**: 您的新 PowerPoint 文件的输出路径将被自动填充。您也可以直接输入路径，或使用“另存为...”按钮来更改。
     -   **选项**:
-        -   **移除水印**: 勾选此项可自动擦除 MinerU JSON 中标记为“丢弃”的元素，例如页脚或页码。
+        -   **移除水印**: 勾选此项可自动擦除被标记为水印语义的元素（例如页脚、页码等）。
         -   **生成调试图片**: 除非您需要排查问题，否则请勿勾选此项。
     -   点击 **开始转换**。
 
@@ -57,10 +59,23 @@
     python -m venv venv
     source venv/bin/activate  # 在 Windows 上: venv\Scripts\activate
     ```
-3.  从 `requirements.txt` 文件安装所需依赖。
-    ```bash
-    pip install -r requirements.txt
-    ```
+3.  按开发目标安装依赖。
+    -   **默认（GPU CUDA 11.8 全量开发）**：
+        ```bash
+        pip install -r requirements.txt
+        ```
+    -   **GPU CUDA 12.6 全量开发**：
+        ```bash
+        pip install -r requirements-gpu-cu126.txt -r requirements-build.txt
+        ```
+    -   **GPU CUDA 12.9 全量开发**：
+        ```bash
+        pip install -r requirements-gpu-cu129.txt -r requirements-build.txt
+        ```
+    -   **CPU 全量开发（CI/其他协作者）**：
+        ```bash
+        pip install -r requirements-dev-cpu.txt
+        ```
 
 ### 从源代码运行
 
@@ -140,6 +155,8 @@ python -m pytest "tests/integration/test_case1_ocr.py" -k all_demo_cases_generat
 - 核心流程文档：
   - `docs/core-flow/font-size-normalization-pre-render.md`
   - `docs/core-flow/ocr-bbox-xy-refine-flow.md`
+  - `docs/core-flow/watermark-ir-removal-flow.md`
 - 测试文档：
   - `docs/testing/font-size-normalization-testing.md`
   - `docs/testing/ocr-bbox-refine-testing.md`
+  - `docs/testing/watermark-ir-removal-testing.md`

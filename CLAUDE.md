@@ -33,7 +33,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 - **Two-Phase Conversion**: Page processing is split into two phases:
   1.  **Analysis**: Elements from the JSON are processed to extract their data and populate the `PageContext`. A clean background is created by inpainting the area under each element.
   2.  **Rendering**: The cleaned background is rendered, followed by images, and finally text. This ensures correct Z-order layering.
-- **Watermark/Footer Handling**: Elements marked as `discarded_blocks` in the JSON are handled based on the `remove_watermark` option.
+- **Watermark/Footer Handling**: Watermark semantics are mapped from MinerU source blocks into unified IR (`is_watermark`). `discarded_blocks` default to watermark `True`, OCR replacement preserves watermark flags during merge, and final rendering removes elements when `remove_watermark=True`.
 - **Advanced Text Processing**:
   - **Bullet Point Correction**: A heuristic prepends a bullet character (`•`) when source text starts with markdown-style list marker.
   - **Single-Line Textbox Widening**: Single-line textboxes are widened by 20% during rendering to prevent unwanted wrapping.
@@ -69,6 +69,8 @@ This file provides guidance to Claude Code when working with code in this reposi
 - Core flow:
   - `docs/core-flow/font-size-normalization-pre-render.md`
   - `docs/core-flow/ocr-bbox-xy-refine-flow.md`
+  - `docs/core-flow/watermark-ir-removal-flow.md`
 - Testing:
   - `docs/testing/font-size-normalization-testing.md`
   - `docs/testing/ocr-bbox-refine-testing.md`
+  - `docs/testing/watermark-ir-removal-testing.md`
