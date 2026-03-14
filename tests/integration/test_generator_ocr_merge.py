@@ -8,7 +8,8 @@ import numpy as np
 from PIL import Image
 from pptx import Presentation
 
-from converter.generator import PPTGenerator, convert_mineru_to_ppt
+from converter.generator import PPTGenerator, convert_mineru_to_ppt, PageContext
+from converter.ir import TextIR, TextRunIR
 from converter.ir_merge import merge_ir_elements
 from converter.ocr_merge import PaddleOCREngine
 
@@ -527,6 +528,90 @@ class TestGeneratorOCRMerge(unittest.TestCase):
                 "Expected OCR-replaced text to inherit MinerU bold in rendered PPT",
             )
 
+    def test_process_page_runs_font_normalization_before_render(self):
+        generator = PPTGenerator("out.pptx", ocr_engine=FakeOCREngine())
+        slide = generator.add_slide()
+        page_image = np.zeros((200, 200, 3), dtype=np.uint8)
+        elements = [
+            {
+                "type": "text",
+                "bbox": [10, 10, 50, 40],
+                "text": "sample",
+                "is_discarded": False,
+            }
+        ]
+
+        events = []
+
+        def _normalize_hook(page_elements):
+            events.append("normalize")
+            return page_elements
+
+        def _render_hook(_generator):
+            events.append("render")
+            return None
+
+        with (
+            mock.patch.object(generator, "_normalize_page_text_font_sizes", side_effect=_normalize_hook) as mocked_normalize,
+            mock.patch("converter.generator.PageContext.render_to_slide", side_effect=_render_hook),
+        ):
+            generator.process_page(slide, elements, page_image, page_size=(200, 200), page_index=0, debug_images=False)
+
+        self.assertEqual(mocked_normalize.call_count, 1)
+        self.assertEqual(events, ["normalize", "render"])
+
+    def test_process_page_preserves_image_bbox_after_font_normalization_stage(self):
+        generator = PPTGenerator("out.pptx", ocr_engine=FakeOCREngine())
+        slide = generator.add_slide()
+        page_image = np.zeros((200, 200, 3), dtype=np.uint8)
+
+        elements = [
+            {
+                "type": "text",
+                "bbox": [10, 10, 50, 40],
+                "text": "caption",
+                "is_discarded": False,
+            },
+            {
+                "type": "image",
+                "bbox": [120, 100, 180, 160],
+                "is_discarded": False,
+            },
+        ]
+
+        coords = {
+            "scale_x": 1.0,
+            "scale_y": 1.0,
+            "img_w": 200,
+            "img_h": 200,
+            "json_w": 200,
+            "json_h": 200,
+        }
+        context = PageContext(page_index=0, page_image=page_image, coords=coords, slide=slide)
+
+        captured_elements = []
+
+        original_render = PageContext.render_to_slide
+
+        def _render_hook(patched_context, patched_generator):
+            captured_elements.extend(patched_context.elements)
+            return original_render(patched_context, patched_generator)
+
+        with mock.patch("converter.generator.PageContext.render_to_slide", autospec=True, side_effect=_render_hook):
+            generator.process_page(
+                slide,
+                elements,
+                page_image,
+                page_size=(200, 200),
+                page_index=0,
+                debug_images=False,
+                context=context,
+            )
+
+        image_entries = [entry for entry in captured_elements if entry.get("type") == "image"]
+        self.assertEqual(len(image_entries), 1)
+        self.assertEqual(image_entries[0]["data"]["bbox"], [120.0, 100.0, 180.0, 160.0])
+
     def test_case2_ir_merge_outputs_text_elements(self):
         repo_root = Path(__file__).resolve().parents[2]
         input_png = repo_root / "demo" / "case2" / "PixPin_2026-03-05_22-01-24.png"
@@ -563,7 +648,7 @@ class TestGeneratorOCRMerge(unittest.TestCase):
             return x1 < x2 and y1 < y2
 
         # simulate adapter output contract for this integration case
-        mineru_ir = []
+        mineru_ir: list[TextIR] = []
         for elem in elements:
             if not elem.get("bbox"):
                 continue
@@ -577,56 +662,62 @@ class TestGeneratorOCRMerge(unittest.TestCase):
             if not text_value and not lines:
                 continue
             mineru_ir.append(
-                {
-                    "type": "text",
-                    "bbox": elem.get("bbox"),
-                    "lines": lines,
-                    "text": text_value,
-                    "group_id": elem.get("group_id"),
-                    "order": [elem.get("index", 0), 0],
-                    "style": {"bold": False, "font_size": None, "align": "left"},
-                    "is_discarded": elem.get("is_discarded", False),
-                    "source": "mineru",
-                }
+                TextIR(
+                    type="text",
+                    bbox=[float(v) for v in elem.get("bbox")],
+                    lines=lines,
+                    text=str(text_value),
+                    group_id=elem.get("group_id"),
+                    order=[float(elem.get("index", 0)), 0.0],
+                    style={"bold": False, "font_size": None, "align": "left"},
+                    is_discarded=bool(elem.get("is_discarded", False)),
+                    source="mineru",
+                    text_runs=None,
+                )
             )
 
-        ocr_ir = [
-            {
-                "type": "text",
-                "bbox": elem.get("bbox"),
-                "lines": elem.get("lines", []),
-                "text": "\n".join(
-                    "".join(span.get("content", "") for span in line.get("spans", []))
-                    for line in elem.get("lines", [])
-                    if line.get("spans")
-                ),
-                "text_runs": [
-                    {
-                        "text": span.get("content", ""),
-                        "bbox": span.get("bbox") or line.get("bbox") or elem.get("bbox"),
-                        "line_index": line_index,
-                        "style": {},
-                    }
-                    for line_index, line in enumerate(elem.get("lines", []))
-                    for span in line.get("spans", [])
-                    if span.get("content", "")
-                ],
-                "group_id": elem.get("group_id"),
-                "order": [elem.get("index", 0), 0],
-                "style": {"bold": False, "font_size": None, "align": "left"},
-                "is_discarded": False,
-                "source": "ocr",
-            }
-            for elem in ocr_elements
-            if elem.get("bbox")
-        ]
+        ocr_ir: list[TextIR] = []
+        for elem in ocr_elements:
+            if not elem.get("bbox"):
+                continue
+            lines = elem.get("lines", [])
+            text = "\n".join(
+                "".join(span.get("content", "") for span in line.get("spans", []))
+                for line in lines
+                if line.get("spans")
+            )
+            runs = [
+                TextRunIR(
+                    text=str(span.get("content", "")),
+                    bbox=[float(v) for v in (span.get("bbox") or line.get("bbox") or elem.get("bbox"))],
+                    line_index=line_index,
+                    style={},
+                )
+                for line_index, line in enumerate(lines)
+                for span in line.get("spans", [])
+                if span.get("content", "")
+            ]
+            ocr_ir.append(
+                TextIR(
+                    type="text",
+                    bbox=[float(v) for v in elem.get("bbox")],
+                    lines=lines,
+                    text=text,
+                    text_runs=runs,
+                    group_id=elem.get("group_id"),
+                    order=[float(elem.get("index", 0)), 0.0],
+                    style={"bold": False, "font_size": None, "align": "left"},
+                    is_discarded=False,
+                    source="ocr",
+                )
+            )
 
         merged, _stats = merge_ir_elements(mineru_ir, ocr_ir, _has_overlap)
 
         merged_texts = [
-            str(elem.get("text", ""))
+            str(elem.text)
             for elem in merged
-            if elem.get("type") == "text"
+            if isinstance(elem, TextIR)
         ]
 
         self.assertTrue(any("构建" in text and "流水线" in text for text in merged_texts))
@@ -635,9 +726,9 @@ class TestGeneratorOCRMerge(unittest.TestCase):
         target_phrase_elements = [
             elem
             for elem in merged
-            if elem.get("type") == "text"
-            and "设计即开发" in str(elem.get("text", ""))
-            and "十倍提效" in str(elem.get("text", ""))
+            if isinstance(elem, TextIR)
+            and "设计即开发" in str(elem.text)
+            and "十倍提效" in str(elem.text)
         ]
         self.assertEqual(
             len(target_phrase_elements),

@@ -59,3 +59,9 @@ This file provides guidance to Claude Code when working with code in this reposi
 - OCR bbox refine behavior is covered by `tests/unit/test_ocr_bbox_refine.py`.
 - Pipeline and wiring coverage is provided by integration tests for forced-OCR behavior and removed CLI OCR flag handling (`tests/integration/test_generator_ocr_merge.py`, `tests/integration/test_cli_ocr_option.py`).
 - Real-sample OCR structure and bbox alignment checks use demo assets under `demo/` (`tests/integration/test_case1_ocr*.py`, `tests/integration/test_case3_ocr_bbox_bottom.py`).
+
+## Docs Index
+- Core flow:
+  - `docs/core-flow/font-size-normalization-pre-render.md`
+- Testing:
+  - `docs/testing/font-size-normalization-testing.md`

@@ -115,3 +115,10 @@ This project now recommends **onedir/installer-style packaging** over onefile fo
 
 4.  **Find build output**:
     The packaged app directory will be generated under `dist/MinerU2PPT/`.
+
+## Documentation
+
+- Core flow docs:
+  - `docs/core-flow/font-size-normalization-pre-render.md`
+- Testing docs:
+  - `docs/testing/font-size-normalization-testing.md`
