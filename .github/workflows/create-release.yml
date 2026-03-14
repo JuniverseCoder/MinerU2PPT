@@ -5,12 +5,17 @@ on:
     tags:
       - 'v*' # Trigger on tags like v1.0, v1.1.0
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: Build and Release ${{ matrix.variant }}
+    name: Build ${{ matrix.variant }}
     runs-on: windows-latest # Must be Windows to build an .exe
     permissions:
-      contents: write # Grant permission to create a release
+      contents: read
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +35,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: ${{ matrix.requirements_file }}
 
       - name: Install dependencies
         run: |
@@ -44,9 +51,30 @@ jobs:
           Compress-Archive -Path dist/MinerU2PPT/* -DestinationPath dist/${{ matrix.asset_name }} -Force
         shell: pwsh
 
-      - name: Create Release and Upload Assets
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: dist/${{ matrix.asset_name }}
+          if-no-files-found: error
+
+  release:
+    name: Create release and upload assets
+    runs-on: windows-latest
+    needs: build
+    permissions:
+      contents: write
+    timeout-minutes: 30
+
+    steps:
+      - name: Download all packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ matrix.asset_name }}
+          files: dist/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
