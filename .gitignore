@@ -64,12 +64,17 @@ venv.bak/
 
 # Hidden directories (dot-prefixed)
 .code-agent-tools/
+.claude/
 
 # Temporary files
 *.swp
 *~
 
 tmp/
+
+# Build outputs
+installer-output/
+output.pptx
 
 # Local demo assets (may contain personal data)
 /demo/
