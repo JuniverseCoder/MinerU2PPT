@@ -8,9 +8,25 @@ import shutil
 import webbrowser
 import locale
 from tkinterdnd2 import DND_FILES, TkinterDnD
-from converter.generator import convert_mineru_to_ppt
+from converter.generator import convert_mineru_to_ppt, TEXT_CLEANUP_MARGIN_RATIO
+from converter.ocr_merge import OCR_FONT_DISTANCE_THRESHOLD, OCR_FONT_DISTANCE_THRESHOLD_LITE
 
 # --- i18n Setup ---
+
+
+def _resolve_model_variant_value(selected_label: str, i18n: dict[str, str]) -> str:
+    mapping = {
+        i18n.get("ocr_model_variant_auto", ""): "auto",
+        i18n.get("ocr_model_variant_lite", ""): "lite",
+        i18n.get("ocr_model_variant_server", ""): "server",
+    }
+    return mapping.get(selected_label, "auto")
+
+
+def _default_font_threshold_for_variant(variant: str) -> float:
+    if variant == "lite":
+        return OCR_FONT_DISTANCE_THRESHOLD_LITE
+    return OCR_FONT_DISTANCE_THRESHOLD
 TRANSLATIONS = {
     "en": {
         "app_title": "File to PPT Converter",
@@ -22,6 +38,17 @@ TRANSLATIONS = {
         "help_button": "?",
         "remove_watermark_checkbox": "Remove Watermark",
         "debug_images_checkbox": "Generate Debug Images",
+        "text_cleanup_margin_label": "Text Box Background Expand Ratio:",
+        "ocr_font_distance_threshold_label": "Font Sensitivity (Higher = Larger Text Box):",
+        "ocr_model_variant_label": "OCR Model Variant:",
+        "ocr_model_variant_auto": "Auto (GPU=Server, CPU=Lite)",
+        "ocr_model_variant_lite": "Lite",
+        "ocr_model_variant_server": "Server",
+        "ocr_advanced_show": "Advanced OCR Options ▸",
+        "ocr_advanced_hide": "Advanced OCR Options ▾",
+        "ocr_det_db_thresh_label": "OCR Det Thresh (higher = stricter):",
+        "ocr_det_db_box_thresh_label": "OCR Box Thresh:",
+        "ocr_det_db_unclip_ratio_label": "OCR Unclip Ratio (lower = tighter):",
         "start_button": "Start Conversion",
         "converting_button": "Converting...",
         "output_folder_button": "Open Output Folder",
@@ -33,7 +60,7 @@ TRANSLATIONS = {
         "error_all_paths": "Please fill in all file paths.",
         "error_dir_not_found": "Output directory not found: {}",
         "info_no_output": "No output file has been generated yet.",
-        "info_debug_not_found": "Debug folder 'tmp' not found. Run a conversion with 'Generate Debug Images' enabled to create it.",
+        "info_debug_not_found": "Debug folder not found. Run a conversion with 'Generate Debug Images' enabled to create output_dir/debug.",
         "log_success": "\n--- CONVERSION FINISHED SUCCESSFULLY ---\n",
         "log_error": "\n--- ERROR ---\n{}\n",
         "msg_conversion_complete": "Conversion process has finished. Check the log for details.",
@@ -49,7 +76,7 @@ TRANSLATIONS = {
         "log_task_start": "Starting task {} of {}: {}",
         "log_task_complete": "Finished task: {}\n",
         "add_task_title": "Add New Task",
-        "page_range_label": "PDF Page Range (optional):",
+        "page_range_label": "PDF Page Range (optional, e.g. 1,3,5-8):",
         "ok_button": "OK",
         "cancel_button": "Cancel",
     },
@@ -63,6 +90,17 @@ TRANSLATIONS = {
         "help_button": "？",
         "remove_watermark_checkbox": "移除水印",
         "debug_images_checkbox": "生成调试图片",
+        "text_cleanup_margin_label": "文本框背景扩大比例：",
+        "ocr_font_distance_threshold_label": "字体敏感度（越大文本框越大）：",
+        "ocr_model_variant_label": "OCR 模型版本：",
+        "ocr_model_variant_auto": "自动（有 GPU 用 Server，无 GPU 用 Lite）",
+        "ocr_model_variant_lite": "Lite",
+        "ocr_model_variant_server": "Server",
+        "ocr_advanced_show": "OCR 高级选项 ▸",
+        "ocr_advanced_hide": "OCR 高级选项 ▾",
+        "ocr_det_db_thresh_label": "OCR 检测阈值（越高越严格）：",
+        "ocr_det_db_box_thresh_label": "OCR 框置信度阈值：",
+        "ocr_det_db_unclip_ratio_label": "OCR 框扩张比例（越小越紧）：",
         "start_button": "开始转换",
         "converting_button": "转换中...",
         "output_folder_button": "打开输出文件夹",
@@ -74,7 +112,7 @@ TRANSLATIONS = {
         "error_all_paths": "请填写所有文件路径。",
         "error_dir_not_found": "输出目录未找到: {}",
         "info_no_output": "尚未生成输出文件。",
-        "info_debug_not_found": "未找到调试文件夹 'tmp'。请在启用“生成调试图片”的情况下运行转换以创建它。",
+        "info_debug_not_found": "未找到调试文件夹。请启用“生成调试图片”运行转换，会在输出目录下创建 debug 文件夹。",
         "log_success": "\n--- 转换成功 ---\n",
         "log_error": "\n--- 错误 ---\n{}\n",
         "msg_conversion_complete": "转换过程已结束。请查看日志了解详情。",
@@ -90,7 +128,7 @@ TRANSLATIONS = {
         "log_task_start": "开始任务 {} of {}: {}",
         "log_task_complete": "完成任务: {}\n",
         "add_task_title": "添加新任务",
-        "page_range_label": "PDF 页码范围（可选）:",
+        "page_range_label": "PDF 页码范围（可选，如 1,3,5-8）:",
         "ok_button": "确定",
         "cancel_button": "取消",
     }
@@ -112,14 +150,26 @@ class AddTaskDialog(tk.Toplevel):
         super().__init__(parent)
         self.i18n = parent.i18n
         self.title(self.i18n['add_task_title'])
-        self.geometry("600x220")
+        self.geometry("640x360")
+        self.minsize(640, 360)
 
         self.input_path = tk.StringVar()
         self.json_path = tk.StringVar()
         self.output_path = tk.StringVar()
         self.page_range = tk.StringVar()
+        self.text_cleanup_margin_ratio = tk.StringVar(value=str(TEXT_CLEANUP_MARGIN_RATIO))
+        self.ocr_font_distance_threshold = tk.StringVar()
+        self.ocr_model_variant = tk.StringVar(value=self.i18n["ocr_model_variant_auto"])
+        self.ocr_det_db_thresh = tk.StringVar()
+        self.ocr_det_db_box_thresh = tk.StringVar()
+        self.ocr_det_db_unclip_ratio = tk.StringVar()
+        self.show_ocr_advanced = tk.BooleanVar(value=False)
         self.remove_watermark = tk.BooleanVar(value=True)
         self.result = None
+        self._font_threshold_is_default = True
+        self._font_threshold_updating = False
+        self._set_font_threshold_default("auto")
+        self.ocr_font_distance_threshold.trace_add("write", self._on_font_threshold_edit)
 
         self._create_widgets()
         self.transient(parent)
@@ -130,6 +180,7 @@ class AddTaskDialog(tk.Toplevel):
         frame = tk.Frame(self, padx=10, pady=10)
         frame.pack(fill=tk.BOTH, expand=True)
         frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=0)
 
         tk.Label(frame, text=self.i18n['input_file_label']).grid(row=0, column=0, sticky="w", pady=5)
         input_entry = tk.Entry(frame, textvariable=self.input_path)
@@ -152,12 +203,50 @@ class AddTaskDialog(tk.Toplevel):
         tk.Label(frame, text=self.i18n['page_range_label']).grid(row=3, column=0, sticky="w", pady=5)
         tk.Entry(frame, textvariable=self.page_range).grid(row=3, column=1, sticky="ew", padx=5)
 
+        tk.Label(frame, text=self.i18n['text_cleanup_margin_label']).grid(row=4, column=0, sticky="w", pady=5)
+        tk.Entry(frame, textvariable=self.text_cleanup_margin_ratio).grid(row=4, column=1, sticky="ew", padx=5)
+
+        tk.Label(frame, text=self.i18n['ocr_font_distance_threshold_label']).grid(row=5, column=0, sticky="w", pady=5)
+        tk.Entry(frame, textvariable=self.ocr_font_distance_threshold).grid(row=5, column=1, sticky="ew", padx=5)
+
+        tk.Label(frame, text=self.i18n['ocr_model_variant_label']).grid(row=6, column=0, sticky="w", pady=5)
+        variant_options = (
+            self.i18n['ocr_model_variant_auto'],
+            self.i18n['ocr_model_variant_lite'],
+            self.i18n['ocr_model_variant_server'],
+        )
+        tk.OptionMenu(
+            frame,
+            self.ocr_model_variant,
+            *variant_options,
+            command=self._on_model_variant_change,
+        ).grid(row=6, column=1, sticky="ew", padx=5)
+
+        advanced_toggle = tk.Checkbutton(
+            frame,
+            text=self.i18n['ocr_advanced_show'],
+            variable=self.show_ocr_advanced,
+            command=self._toggle_ocr_advanced,
+        )
+        advanced_toggle.grid(row=7, column=0, columnspan=2, sticky="w", pady=5)
+
+        self.ocr_advanced_frame = tk.Frame(frame)
+        self.ocr_advanced_frame.grid(row=8, column=0, columnspan=3, sticky="ew")
+        tk.Label(self.ocr_advanced_frame, text=self.i18n['ocr_det_db_thresh_label']).grid(row=0, column=0, sticky="w", pady=5)
+        tk.Entry(self.ocr_advanced_frame, textvariable=self.ocr_det_db_thresh).grid(row=0, column=1, sticky="ew", padx=5)
+        tk.Label(self.ocr_advanced_frame, text=self.i18n['ocr_det_db_box_thresh_label']).grid(row=1, column=0, sticky="w", pady=5)
+        tk.Entry(self.ocr_advanced_frame, textvariable=self.ocr_det_db_box_thresh).grid(row=1, column=1, sticky="ew", padx=5)
+        tk.Label(self.ocr_advanced_frame, text=self.i18n['ocr_det_db_unclip_ratio_label']).grid(row=2, column=0, sticky="w", pady=5)
+        tk.Entry(self.ocr_advanced_frame, textvariable=self.ocr_det_db_unclip_ratio).grid(row=2, column=1, sticky="ew", padx=5)
+        self.ocr_advanced_frame.grid_remove()
+        self._toggle_ocr_advanced()
+
         options_frame = tk.Frame(frame)
-        options_frame.grid(row=4, column=0, columnspan=3, pady=10, sticky="w")
+        options_frame.grid(row=9, column=0, columnspan=3, pady=10, sticky="w")
         tk.Checkbutton(options_frame, text=self.i18n['remove_watermark_checkbox'], variable=self.remove_watermark).pack(side=tk.LEFT)
 
         buttons_frame = tk.Frame(frame)
-        buttons_frame.grid(row=5, column=0, columnspan=3, pady=5)
+        buttons_frame.grid(row=10, column=0, columnspan=3, pady=5)
         tk.Button(buttons_frame, text=self.i18n['ok_button'], command=self._on_ok, width=10).pack(side=tk.LEFT, padx=10)
         tk.Button(buttons_frame, text=self.i18n['cancel_button'], command=self.destroy, width=10).pack(side=tk.LEFT, padx=10)
 
@@ -194,9 +283,60 @@ class AddTaskDialog(tk.Toplevel):
             "json": json_f,
             "output": output_f,
             "page_range": self.page_range.get().strip() or None,
+            "text_cleanup_margin_ratio": self.text_cleanup_margin_ratio.get().strip() or None,
+            "ocr_font_distance_threshold": self._resolved_font_threshold_value(),
+            "ocr_model_variant": _resolve_model_variant_value(self.ocr_model_variant.get(), self.i18n),
+            "ocr_det_db_thresh": self.ocr_det_db_thresh.get().strip() or None,
+            "ocr_det_db_box_thresh": self.ocr_det_db_box_thresh.get().strip() or None,
+            "ocr_det_db_unclip_ratio": self.ocr_det_db_unclip_ratio.get().strip() or None,
             "remove_watermark": self.remove_watermark.get(),
         }
         self.destroy()
+
+    def _resolved_font_threshold_value(self):
+        if self._font_threshold_is_default:
+            return None
+        return self.ocr_font_distance_threshold.get().strip() or None
+
+    def _on_font_threshold_edit(self, *_args):
+        if self._font_threshold_updating:
+            return
+        value = self.ocr_font_distance_threshold.get().strip()
+        if value == "":
+            self._font_threshold_is_default = True
+            return
+        self._font_threshold_is_default = False
+
+    def _set_font_threshold_default(self, variant: str):
+        default_value = _default_font_threshold_for_variant(variant)
+        self._font_threshold_updating = True
+        self.ocr_font_distance_threshold.set(str(default_value))
+        self._font_threshold_updating = False
+        self._font_threshold_is_default = True
+
+    def _on_model_variant_change(self, selected_label):
+        self.ocr_model_variant.set(selected_label)
+        if self._font_threshold_is_default:
+            self._set_font_threshold_default(_resolve_model_variant_value(selected_label, self.i18n))
+
+    def _toggle_ocr_advanced(self):
+        show = self.show_ocr_advanced.get()
+        label = self.i18n['ocr_advanced_hide'] if show else self.i18n['ocr_advanced_show']
+        if hasattr(self, "single_ocr_advanced_frame"):
+            frame = self.single_ocr_advanced_frame
+        else:
+            frame = self.ocr_advanced_frame
+        for widget in frame.master.winfo_children():
+            if isinstance(widget, tk.Checkbutton) and widget.cget('text') in {
+                self.i18n['ocr_advanced_show'],
+                self.i18n['ocr_advanced_hide'],
+            }:
+                widget.config(text=label)
+                break
+        if show:
+            frame.grid()
+        else:
+            frame.grid_remove()
 
 class App(TkinterDnD.Tk):
     def __init__(self):
@@ -204,15 +344,26 @@ class App(TkinterDnD.Tk):
         self.i18n = TRANSLATIONS[get_language()]
         self.title(self.i18n['app_title'])
         self.geometry("700x600")
-        self.debug_folder_path = os.path.join(os.getcwd(), "tmp")
+        self.debug_folder_path = None
         self.input_path, self.json_path, self.output_path = tk.StringVar(), tk.StringVar(), tk.StringVar()
         self.page_range = tk.StringVar()
+        self.text_cleanup_margin_ratio = tk.StringVar(value=str(TEXT_CLEANUP_MARGIN_RATIO))
+        self.ocr_font_distance_threshold = tk.StringVar()
+        self.ocr_model_variant = tk.StringVar(value=self.i18n["ocr_model_variant_auto"])
+        self.ocr_det_db_thresh = tk.StringVar()
+        self.ocr_det_db_box_thresh = tk.StringVar()
+        self.ocr_det_db_unclip_ratio = tk.StringVar()
+        self.show_ocr_advanced = tk.BooleanVar(value=False)
         self.remove_watermark, self.generate_debug = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
         self.batch_mode = tk.BooleanVar(value=False)
         self.task_list = []
         self.shared_ocr_engine = None
         self.log_queue = queue.Queue()
         self.queue_handler = QueueHandler(self.log_queue)
+        self._font_threshold_is_default = True
+        self._font_threshold_updating = False
+        self._set_font_threshold_default("auto")
+        self.ocr_font_distance_threshold.trace_add("write", self._on_font_threshold_edit)
         self._create_widgets()
         self._poll_log_queue()
 
@@ -251,6 +402,43 @@ class App(TkinterDnD.Tk):
 
         tk.Label(self.single_mode_frame, text=self.i18n['page_range_label']).grid(row=3, column=0, sticky="w", pady=2)
         tk.Entry(self.single_mode_frame, textvariable=self.page_range).grid(row=3, column=1, sticky="ew", padx=5)
+
+        tk.Label(self.single_mode_frame, text=self.i18n['text_cleanup_margin_label']).grid(row=4, column=0, sticky="w", pady=2)
+        tk.Entry(self.single_mode_frame, textvariable=self.text_cleanup_margin_ratio).grid(row=4, column=1, sticky="ew", padx=5)
+
+        tk.Label(self.single_mode_frame, text=self.i18n['ocr_font_distance_threshold_label']).grid(row=5, column=0, sticky="w", pady=2)
+        tk.Entry(self.single_mode_frame, textvariable=self.ocr_font_distance_threshold).grid(row=5, column=1, sticky="ew", padx=5)
+
+        tk.Label(self.single_mode_frame, text=self.i18n['ocr_model_variant_label']).grid(row=6, column=0, sticky="w", pady=2)
+        single_variant_options = (
+            self.i18n['ocr_model_variant_auto'],
+            self.i18n['ocr_model_variant_lite'],
+            self.i18n['ocr_model_variant_server'],
+        )
+        tk.OptionMenu(
+            self.single_mode_frame,
+            self.ocr_model_variant,
+            *single_variant_options,
+            command=self._on_model_variant_change,
+        ).grid(row=6, column=1, sticky="ew", padx=5)
+
+        single_advanced_toggle = tk.Checkbutton(
+            self.single_mode_frame,
+            text=self.i18n['ocr_advanced_show'],
+            variable=self.show_ocr_advanced,
+            command=self._toggle_ocr_advanced,
+        )
+        single_advanced_toggle.grid(row=7, column=0, columnspan=2, sticky="w", pady=2)
+
+        self.single_ocr_advanced_frame = tk.Frame(self.single_mode_frame)
+        self.single_ocr_advanced_frame.grid(row=8, column=0, columnspan=3, sticky="ew")
+        tk.Label(self.single_ocr_advanced_frame, text=self.i18n['ocr_det_db_thresh_label']).grid(row=0, column=0, sticky="w", pady=2)
+        tk.Entry(self.single_ocr_advanced_frame, textvariable=self.ocr_det_db_thresh).grid(row=0, column=1, sticky="ew", padx=5)
+        tk.Label(self.single_ocr_advanced_frame, text=self.i18n['ocr_det_db_box_thresh_label']).grid(row=1, column=0, sticky="w", pady=2)
+        tk.Entry(self.single_ocr_advanced_frame, textvariable=self.ocr_det_db_box_thresh).grid(row=1, column=1, sticky="ew", padx=5)
+        tk.Label(self.single_ocr_advanced_frame, text=self.i18n['ocr_det_db_unclip_ratio_label']).grid(row=2, column=0, sticky="w", pady=2)
+        tk.Entry(self.single_ocr_advanced_frame, textvariable=self.ocr_det_db_unclip_ratio).grid(row=2, column=1, sticky="ew", padx=5)
+        self.single_ocr_advanced_frame.grid_remove()
 
         # --- Batch Mode Frame ---
         self.batch_frame = tk.Frame(self.main_frame)
@@ -296,6 +484,52 @@ class App(TkinterDnD.Tk):
 
         self._toggle_batch_mode() # Set initial state to single mode
         self._toggle_batch_mode()
+        self._toggle_ocr_advanced()
+
+    def _resolved_font_threshold_value(self):
+        if self._font_threshold_is_default:
+            return None
+        return self.ocr_font_distance_threshold.get().strip() or None
+
+    def _on_font_threshold_edit(self, *_args):
+        if self._font_threshold_updating:
+            return
+        value = self.ocr_font_distance_threshold.get().strip()
+        if value == "":
+            self._font_threshold_is_default = True
+            return
+        self._font_threshold_is_default = False
+
+    def _set_font_threshold_default(self, variant: str):
+        default_value = _default_font_threshold_for_variant(variant)
+        self._font_threshold_updating = True
+        self.ocr_font_distance_threshold.set(str(default_value))
+        self._font_threshold_updating = False
+        self._font_threshold_is_default = True
+
+    def _on_model_variant_change(self, selected_label):
+        self.ocr_model_variant.set(selected_label)
+        if self._font_threshold_is_default:
+            self._set_font_threshold_default(_resolve_model_variant_value(selected_label, self.i18n))
+
+    def _toggle_ocr_advanced(self):
+        show = self.show_ocr_advanced.get()
+        label = self.i18n['ocr_advanced_hide'] if show else self.i18n['ocr_advanced_show']
+        if hasattr(self, "single_ocr_advanced_frame"):
+            frame = self.single_ocr_advanced_frame
+        else:
+            frame = self.ocr_advanced_frame
+        for widget in frame.master.winfo_children():
+            if isinstance(widget, tk.Checkbutton) and widget.cget('text') in {
+                self.i18n['ocr_advanced_show'],
+                self.i18n['ocr_advanced_hide'],
+            }:
+                widget.config(text=label)
+                break
+        if show:
+            frame.grid()
+        else:
+            frame.grid_remove()
 
     def _toggle_batch_mode(self):
         is_batch = not self.batch_mode.get()
@@ -325,6 +559,9 @@ class App(TkinterDnD.Tk):
             suffix_parts = []
             if not task['remove_watermark']:
                 suffix_parts.append("Keep WM")
+            variant = task.get("ocr_model_variant")
+            if variant and variant != "auto":
+                suffix_parts.append(f"OCR:{variant}")
             suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
             self.task_listbox.insert(tk.END, f"IN: {os.path.basename(task['input'])} -> OUT: {os.path.basename(task['output'])}{suffix}")
 
@@ -423,15 +660,30 @@ class App(TkinterDnD.Tk):
             self.after(0, self._finalize_gui, success)
 
     def _run_single_conversion(self, json_path, input_path, output_path):
+        resolved_variant = _resolve_model_variant_value(self.ocr_model_variant.get(), self.i18n)
+        threshold_value = self._resolved_font_threshold_value()
+        det_db_thresh = self.ocr_det_db_thresh.get().strip() or None
+        det_db_box_thresh = self.ocr_det_db_box_thresh.get().strip() or None
+        det_db_unclip_ratio = self.ocr_det_db_unclip_ratio.get().strip() or None
         if self.shared_ocr_engine is None:
             from converter.ocr_merge import PaddleOCREngine
             self.shared_ocr_engine = PaddleOCREngine(
                 device_policy="auto",
-                offline_only=True,
-                det_db_thresh=0.35,
-                det_db_box_thresh=0.80,
-                det_db_unclip_ratio=1.00,
+                use_angle_cls=False,
+                offline_only=False,
+                det_db_thresh=det_db_thresh,
+                det_db_box_thresh=det_db_box_thresh,
+                det_db_unclip_ratio=det_db_unclip_ratio,
+                refine_font_distance_threshold=threshold_value,
+                model_variant=resolved_variant,
             )
+        else:
+            self.shared_ocr_engine.refine_font_distance_threshold = threshold_value
+            self.shared_ocr_engine.model_variant = resolved_variant
+            self.shared_ocr_engine.det_db_thresh = det_db_thresh
+            self.shared_ocr_engine.det_db_box_thresh = det_db_box_thresh
+            self.shared_ocr_engine.det_db_unclip_ratio = det_db_unclip_ratio
+            self.shared_ocr_engine._ocr = None
 
         args = (
             json_path,
@@ -440,7 +692,17 @@ class App(TkinterDnD.Tk):
             self.remove_watermark.get(),
             self.generate_debug.get(),
         )
-        convert_mineru_to_ppt(*args, ocr_engine=self.shared_ocr_engine, page_range=self.page_range.get().strip() or None)
+        convert_mineru_to_ppt(
+            *args,
+            ocr_engine=self.shared_ocr_engine,
+            page_range=self.page_range.get().strip() or None,
+            text_cleanup_margin_ratio=self.text_cleanup_margin_ratio.get().strip() or None,
+            ocr_font_distance_threshold=threshold_value,
+            ocr_model_variant=_resolve_model_variant_value(self.ocr_model_variant.get(), self.i18n),
+            ocr_det_db_thresh=det_db_thresh,
+            ocr_det_db_box_thresh=det_db_box_thresh,
+            ocr_det_db_unclip_ratio=det_db_unclip_ratio,
+        )
         self.log_queue.put(self.i18n['log_success'])
 
     def _run_batch_conversion(self):
@@ -457,20 +719,41 @@ class App(TkinterDnD.Tk):
                     task['remove_watermark'],
                     False,
                 )
+                variant = task.get('ocr_model_variant') or "auto"
+                threshold_value = task.get('ocr_font_distance_threshold') or None
+                det_db_thresh = task.get('ocr_det_db_thresh') or None
+                det_db_box_thresh = task.get('ocr_det_db_box_thresh') or None
+                det_db_unclip_ratio = task.get('ocr_det_db_unclip_ratio') or None
                 if self.shared_ocr_engine is None:
                     from converter.ocr_merge import PaddleOCREngine
                     self.shared_ocr_engine = PaddleOCREngine(
                         device_policy="auto",
-                        offline_only=True,
-                        det_db_thresh=0.35,
-                        det_db_box_thresh=0.80,
-                        det_db_unclip_ratio=1.00,
+                        use_angle_cls=False,
+                        offline_only=False,
+                        det_db_thresh=det_db_thresh,
+                        det_db_box_thresh=det_db_box_thresh,
+                        det_db_unclip_ratio=det_db_unclip_ratio,
+                        refine_font_distance_threshold=threshold_value,
+                        model_variant=variant,
                     )
+                else:
+                    self.shared_ocr_engine.refine_font_distance_threshold = threshold_value
+                    self.shared_ocr_engine.model_variant = variant
+                    self.shared_ocr_engine.det_db_thresh = det_db_thresh
+                    self.shared_ocr_engine.det_db_box_thresh = det_db_box_thresh
+                    self.shared_ocr_engine.det_db_unclip_ratio = det_db_unclip_ratio
+                    self.shared_ocr_engine._ocr = None
 
                 convert_mineru_to_ppt(
                     *args,
                     ocr_engine=self.shared_ocr_engine,
                     page_range=(task.get('page_range') or None),
+                    text_cleanup_margin_ratio=(task.get('text_cleanup_margin_ratio') or None),
+                    ocr_font_distance_threshold=threshold_value,
+                    ocr_model_variant=variant,
+                    ocr_det_db_thresh=det_db_thresh,
+                    ocr_det_db_box_thresh=det_db_box_thresh,
+                    ocr_det_db_unclip_ratio=det_db_unclip_ratio,
                 )
                 self.log_queue.put(self.i18n['log_task_complete'].format(os.path.basename(task['input'])))
             except Exception as e:

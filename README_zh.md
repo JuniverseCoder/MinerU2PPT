@@ -91,11 +91,13 @@
 #### OCR 相关 CLI 参数
 
 -   `--ocr-device {auto,gpu,cpu}`：OCR 设备策略，默认 `auto`（`gpu -> cpu` 回退）。
--   `--ocr-model-root <path>`：可选，本地 PaddleOCR 模型根目录。
+-   `--ocr-model-root <path>`：可选，本地 PaddleOCR 模型根目录。未指定时会自动下载模型。
+-   `--ocr-model-variant {auto,lite,server}`：OCR 模型版本，默认 `auto`（有 GPU 用 server，无 GPU 用 lite/mobile）。
+-   `--ocr-font-distance-threshold <float>`：字体敏感度，用于 OCR bbox 细化（默认 `60.0`）。数值越大，文本框越大。
 
 示例：
 ```bash
-python main.py --json "demo/case1/MinerU_xxx.json" --input "demo/case1/PixPin_xxx.png" --output "out.pptx" --ocr-device auto --ocr-model-root "models/paddleocr"
+python main.py --json "demo/case1/MinerU_xxx.json" --input "demo/case1/PixPin_xxx.png" --output "out.pptx" --ocr-device auto --ocr-font-distance-threshold 60
 ```
 
 ### 回归：为所有 Demo Case 生成 PPT
@@ -123,19 +125,16 @@ python -m pytest "tests/integration/test_case1_ocr.py" -k all_demo_cases_generat
     pip install pyinstaller
     ```
 
-2.  **准备本地 OCR 模型（离线优先）**:
-    模型根目录解析优先级为：
-    1. CLI/引擎参数 `model_root`
-    2. 环境变量 `MINERU_OCR_MODEL_ROOT`
-    3. 可执行目录 `models/paddleocr`
-    4. 源码目录 `models/paddleocr`
+2.  **OCR 模型（默认自动下载）**:
+    默认会在首次运行时自动下载模型。如需使用本地模型，可传 `--ocr-model-root` 或设置 `MINERU_OCR_MODEL_ROOT`。
 
-    目录结构要求：
+    可选本地目录结构（仅在提供时需要）：
     ```
-    models/paddleocr/<lang>/det
-    models/paddleocr/<lang>/rec
-    models/paddleocr/<lang>/cls
+    models/paddleocr/<variant>/<lang>/det
+    models/paddleocr/<variant>/<lang>/rec
+    models/paddleocr/<variant>/<lang>/cls  # 仅在启用方向分类时需要
     ```
+    其中 `<variant>` 为 `lite` 或 `server`。
 
 3.  **构建 onedir 包**:
     ```bash
@@ -156,7 +155,10 @@ python -m pytest "tests/integration/test_case1_ocr.py" -k all_demo_cases_generat
   - `docs/core-flow/font-size-normalization-pre-render.md`
   - `docs/core-flow/ocr-bbox-xy-refine-flow.md`
   - `docs/core-flow/watermark-ir-removal-flow.md`
+- 架构文档：
+  - `docs/architecture/ocr-engine-configuration.md`
 - 测试文档：
   - `docs/testing/font-size-normalization-testing.md`
   - `docs/testing/ocr-bbox-refine-testing.md`
+  - `docs/testing/ocr-configuration-testing.md`
   - `docs/testing/watermark-ir-removal-testing.md`

@@ -6,6 +6,8 @@
 - Entry/exit points:
   - Entry: `converter/ocr_merge.py::refine_ocr_text_elements`
   - Exit: refined OCR text elements with updated `bbox`, `lines[].bbox`, `spans[].bbox`
+- OCR detection parameters:
+  - Optional DB detection settings (det_db_thresh / det_db_box_thresh / det_db_unclip_ratio) are passed when the OCR engine is initialized and influence upstream detection before refinement.
 
 ## Happy Path
 1. Convert element/line bbox from JSON coordinates to pixel coordinates.

@@ -70,7 +70,10 @@ This file provides guidance to Claude Code when working with code in this reposi
   - `docs/core-flow/font-size-normalization-pre-render.md`
   - `docs/core-flow/ocr-bbox-xy-refine-flow.md`
   - `docs/core-flow/watermark-ir-removal-flow.md`
+- Architecture:
+  - `docs/architecture/ocr-engine-configuration.md`
 - Testing:
   - `docs/testing/font-size-normalization-testing.md`
   - `docs/testing/ocr-bbox-refine-testing.md`
+  - `docs/testing/ocr-configuration-testing.md`
   - `docs/testing/watermark-ir-removal-testing.md`

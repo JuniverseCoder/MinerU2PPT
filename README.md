@@ -93,11 +93,13 @@ This section provides instructions for running the application from source and p
 #### OCR CLI Options
 
 -   `--ocr-device {auto,gpu,cpu}`: OCR device policy. Default is `auto` (`gpu -> cpu` fallback).
--   `--ocr-model-root <path>`: Optional local PaddleOCR model root.
+-   `--ocr-model-root <path>`: Optional local PaddleOCR model root. When omitted, PaddleOCR will download models automatically on first run.
+-   `--ocr-model-variant {auto,lite,server}`: OCR model variant. Default `auto` picks server when GPU is available, otherwise lite (mobile models).
+-   `--ocr-font-distance-threshold <float>`: Font sensitivity for OCR bbox refinement (default `60.0`). Higher values tend to produce larger text boxes.
 
 Example:
 ```bash
-python main.py --json "demo/case1/MinerU_xxx.json" --input "demo/case1/PixPin_xxx.png" --output "out.pptx" --ocr-device auto --ocr-model-root "models/paddleocr"
+python main.py --json "demo/case1/MinerU_xxx.json" --input "demo/case1/PixPin_xxx.png" --output "out.pptx" --ocr-device auto --ocr-font-distance-threshold 60
 ```
 
 ### Regression: Generate PPT for All Demo Cases
@@ -125,19 +127,16 @@ This project now recommends **onedir/installer-style packaging** over onefile fo
     pip install pyinstaller
     ```
 
-2.  **Prepare Local OCR Models (offline-first)**:
-    Put local models under one of the supported roots (priority order):
-    1. CLI/engine `model_root`
-    2. environment variable `MINERU_OCR_MODEL_ROOT`
-    3. executable directory `models/paddleocr`
-    4. source repository `models/paddleocr`
+2.  **OCR models (auto-download by default)**:
+    By default PaddleOCR downloads models automatically on first run. If you want to provide local models, pass `--ocr-model-root` or set `MINERU_OCR_MODEL_ROOT`.
 
-    Directory layout:
+    Optional local layout (when provided):
     ```
-    models/paddleocr/<lang>/det
-    models/paddleocr/<lang>/rec
-    models/paddleocr/<lang>/cls
+    models/paddleocr/<variant>/<lang>/det
+    models/paddleocr/<variant>/<lang>/rec
+    models/paddleocr/<variant>/<lang>/cls  # optional if angle classification is enabled
     ```
+    Where `<variant>` is `lite` or `server`.
 
 3.  **Build the onedir package**:
     ```bash
@@ -158,7 +157,10 @@ This project now recommends **onedir/installer-style packaging** over onefile fo
   - `docs/core-flow/font-size-normalization-pre-render.md`
   - `docs/core-flow/ocr-bbox-xy-refine-flow.md`
   - `docs/core-flow/watermark-ir-removal-flow.md`
+- Architecture docs:
+  - `docs/architecture/ocr-engine-configuration.md`
 - Testing docs:
   - `docs/testing/font-size-normalization-testing.md`
   - `docs/testing/ocr-bbox-refine-testing.md`
+  - `docs/testing/ocr-configuration-testing.md`
   - `docs/testing/watermark-ir-removal-testing.md`

@@ -135,6 +135,87 @@ class TestIRMerge(unittest.TestCase):
         )
         self.assertGreaterEqual(stats["overlay_fragment_groups"], 1)
 
+    def test_overlay_lines_sorted_by_y_then_x(self):
+        base = [_text([0, 0, 400, 200], "base", source="mineru")]
+        overlay = [
+            _text(
+                [200, 52, 260, 70],
+                "second-right",
+                source="ocr",
+                lines=[
+                    {
+                        "bbox": [200, 52, 260, 70],
+                        "spans": [{"bbox": [200, 52, 260, 70], "content": "second-right", "type": "text"}],
+                    }
+                ],
+            ),
+            _text(
+                [20, 50, 80, 70],
+                "second-left",
+                source="ocr",
+                lines=[
+                    {
+                        "bbox": [20, 50, 80, 70],
+                        "spans": [{"bbox": [20, 50, 80, 70], "content": "second-left", "type": "text"}],
+                    }
+                ],
+            ),
+            _text(
+                [30, 10, 90, 30],
+                "first-line",
+                source="ocr",
+                lines=[
+                    {
+                        "bbox": [30, 10, 90, 30],
+                        "spans": [{"bbox": [30, 10, 90, 30], "content": "first-line", "type": "text"}],
+                    }
+                ],
+            ),
+        ]
+
+        merged, stats = merge_ir_elements(base, overlay)
+        self.assertEqual(len(merged), 1)
+        self.assertGreaterEqual(stats["overlay_fragment_groups"], 1)
+        self.assertEqual(
+            "".join(run.text for run in merged[0].text_runs),
+            "first-linesecond-leftsecond-right",
+        )
+
+    def test_overlay_line_break_on_low_y_overlap(self):
+        base = [_text([0, 0, 200, 120], "base", source="mineru")]
+        overlay = [
+            _text(
+                [20, 10, 80, 40],
+                "line-one",
+                source="ocr",
+                lines=[
+                    {
+                        "bbox": [20, 10, 80, 40],
+                        "spans": [{"bbox": [20, 10, 80, 40], "content": "line-one", "type": "text"}],
+                    }
+                ],
+            ),
+            _text(
+                [20, 39, 80, 68],
+                "line-two",
+                source="ocr",
+                lines=[
+                    {
+                        "bbox": [20, 39, 80, 68],
+                        "spans": [{"bbox": [20, 39, 80, 68], "content": "line-two", "type": "text"}],
+                    }
+                ],
+            ),
+        ]
+
+        merged, stats = merge_ir_elements(base, overlay)
+        self.assertEqual(len(merged), 1)
+        self.assertGreaterEqual(stats["overlay_fragment_groups"], 1)
+        self.assertEqual(
+            merged[0].text,
+            "line-one\nline-two",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import cmp_to_key
 from typing import Any, Callable
 
 from .ir import ElementIR, ImageIR, TextIR, TextRunIR, rebuild_text_from_runs, validate_ir_elements
@@ -25,56 +26,103 @@ def _union_bboxes(bboxes: list[list[float]]) -> list[float]:
     ]
 
 
-def _sort_key(elem: ElementIR):
-    bbox = elem.bbox or [0.0, 0.0, 0.0, 0.0]
-    return (float(bbox[1]), float(bbox[0]))
+def _bbox_same_line(a: list[float], b: list[float]) -> bool:
+    y1 = max(a[1], b[1])
+    y2 = min(a[3], b[3])
+    overlap = y2 - y1
+    if overlap <= 0:
+        return False
+    ha = max(1e-6, a[3] - a[1])
+    hb = max(1e-6, b[3] - b[1])
+    ratio = overlap / min(ha, hb)
+    return ratio >= 0.55
 
 
-def _should_merge_line_fragments(prev_bbox: list[float], curr_bbox: list[float]) -> bool:
-    prev_h = max(1e-6, prev_bbox[3] - prev_bbox[1])
-    curr_h = max(1e-6, curr_bbox[3] - curr_bbox[1])
-    max_h = max(prev_h, curr_h)
+def _sort_compare(a: ElementIR, b: ElementIR) -> int:
+    bbox_a = a.bbox or [0.0, 0.0, 0.0, 0.0]
+    bbox_b = b.bbox or [0.0, 0.0, 0.0, 0.0]
 
-    prev_center_y = (prev_bbox[1] + prev_bbox[3]) / 2
-    curr_center_y = (curr_bbox[1] + curr_bbox[3]) / 2
-    same_y_band = abs(prev_center_y - curr_center_y) <= max_h * 0.55
+    if _bbox_same_line(bbox_a, bbox_b):
+        if bbox_a[0] < bbox_b[0]:
+            return -1
+        if bbox_a[0] > bbox_b[0]:
+            return 1
+        return 0
 
-    horizontal_gap = curr_bbox[0] - prev_bbox[2]
-    close_in_x = -max_h * 0.2 <= horizontal_gap <= max_h * 1.5
+    if bbox_a[1] < bbox_b[1]:
+        return -1
+    if bbox_a[1] > bbox_b[1]:
+        return 1
+    return 0
 
-    return same_y_band and close_in_x
 
+def _split_members_into_lines(ordered: list[TextIR]) -> list[list[TextIR]]:
+    line_groups: list[list[TextIR]] = []
+    current_members: list[TextIR] = []
+    current_bbox: list[float] | None = None
 
-def _merge_lines_by_geometry(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not lines:
-        return []
-
-    sorted_lines = sorted(lines, key=lambda line: (line["bbox"][1], line["bbox"][0]))
-    merged: list[dict[str, Any]] = []
-
-    for line in sorted_lines:
-        if not merged:
-            merged.append({"bbox": list(line["bbox"]), "spans": list(line.get("spans", []))})
+    for elem in ordered:
+        elem_bbox = elem.bbox
+        if not elem_bbox:
             continue
+        if not current_members:
+            current_members = [elem]
+            current_bbox = list(elem_bbox)
+            continue
+        if current_bbox is not None and _bbox_same_line(current_bbox, elem_bbox):
+            current_members.append(elem)
+            current_bbox = _union_bboxes([current_bbox, elem_bbox])
+        else:
+            line_groups.append(current_members)
+            current_members = [elem]
+            current_bbox = list(elem_bbox)
 
-        prev = merged[-1]
-        prev_bbox = prev["bbox"]
-        curr_bbox = line["bbox"]
+    if current_members:
+        line_groups.append(current_members)
 
-        if _should_merge_line_fragments(prev_bbox, curr_bbox):
-            merged_bbox = _union_bboxes([prev_bbox, curr_bbox])
-            merged_spans = list(prev.get("spans", [])) + list(line.get("spans", []))
-            merged_spans.sort(
+    return line_groups
+
+
+def _merge_lines_by_geometry(line_groups: list[list[TextIR]]) -> list[dict[str, Any]]:
+    merged_lines: list[dict[str, Any]] = []
+
+    for line_members in line_groups:
+        spans: list[dict[str, Any]] = []
+        line_bboxes: list[list[float]] = []
+        for elem in line_members:
+            if elem.bbox:
+                line_bboxes.append(elem.bbox)
+            for line in _extract_elem_lines(elem):
+                line_bbox = line.get("bbox") or elem.bbox
+                raw_spans = line.get("spans", []) or []
+                if not raw_spans:
+                    raw_spans = [{"bbox": line_bbox, "content": "", "type": "text", "style": {}}]
+                for span in raw_spans:
+                    span_bbox = span.get("bbox") or line_bbox
+                    spans.append(
+                        {
+                            "bbox": span_bbox,
+                            "content": span.get("content", ""),
+                            "type": span.get("type", "text"),
+                            "style": span.get("style") or {},
+                        }
+                    )
+
+        if spans:
+            spans.sort(
                 key=lambda span: (
                     (span.get("bbox") or [0, 0, 0, 0])[0],
                     (span.get("bbox") or [0, 0, 0, 0])[1],
                 )
             )
-            merged[-1] = {"bbox": merged_bbox, "spans": merged_spans}
+            line_bbox = _union_bboxes([span.get("bbox") or [0, 0, 0, 0] for span in spans])
         else:
-            merged.append({"bbox": list(curr_bbox), "spans": list(line.get("spans", []))})
+            line_bbox = _union_bboxes(line_bboxes)
+            spans = [{"bbox": line_bbox, "content": "", "type": "text", "style": {}}]
 
-    return merged
+        merged_lines.append({"bbox": line_bbox, "spans": spans})
+
+    return merged_lines
 
 
 def _extract_elem_lines(elem: TextIR) -> list[dict[str, Any]]:
@@ -215,17 +263,19 @@ def _inherit_overlay_bold_from_base(
 
 
 def _combine_overlay_members(members: list[TextIR]) -> TextIR:
-    ordered = sorted([member for member in members if member.bbox], key=_sort_key)
+    ordered = sorted(
+        [member for member in members if member.bbox],
+        key=cmp_to_key(_sort_compare),
+    )
     template = ordered[0]
 
-    raw_lines: list[dict[str, Any]] = []
     all_bboxes: list[list[float]] = []
     for elem in ordered:
         if elem.bbox:
             all_bboxes.append(elem.bbox)
-        raw_lines.extend(_extract_elem_lines(elem))
 
-    merged_lines = _merge_lines_by_geometry(raw_lines)
+    line_groups = _split_members_into_lines(ordered)
+    merged_lines = _merge_lines_by_geometry(line_groups)
     line_bboxes = [line["bbox"] for line in merged_lines if line.get("bbox")]
     final_bbox = _union_bboxes(line_bboxes if line_bboxes else all_bboxes)
 
@@ -294,7 +344,7 @@ def _merge_overlay_text_fragments_by_base_overlap(
         if index not in consumed_overlay
     ] + synthesized_overlays
 
-    merged_overlay_elements.sort(key=_sort_key)
+    merged_overlay_elements.sort(key=cmp_to_key(_sort_compare))
     return merged_overlay_elements, {
         "overlay_fragment_groups": len(synthesized_overlays),
         "overlay_fragment_consumed": len(consumed_overlay),
@@ -383,7 +433,7 @@ def merge_ir_elements(
 
     merged = [_sync_text_and_runs(elem) for elem in merged]
     merged = validate_ir_elements(merged, require_text_runs_consistency=True)
-    merged.sort(key=_sort_key)
+    merged.sort(key=cmp_to_key(_sort_compare))
 
     stats = {
         "overlay_candidates": candidates,
