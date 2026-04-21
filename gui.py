@@ -6,8 +6,16 @@ import sys
 import os
 import shutil
 import webbrowser
+import subprocess
+import platform
 import locale
-from tkinterdnd2 import DND_FILES, TkinterDnD
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except Exception:
+    DND_FILES = None
+    TkinterDnD = None
+
+_HAS_DND = False  # resolved at App.__init__ time
 from converter.generator import convert_mineru_to_ppt, TEXT_CLEANUP_MARGIN_RATIO
 from converter.ocr_merge import OCR_FONT_DISTANCE_THRESHOLD, OCR_FONT_DISTANCE_THRESHOLD_LITE
 
@@ -185,15 +193,17 @@ class AddTaskDialog(tk.Toplevel):
         tk.Label(frame, text=self.i18n['input_file_label']).grid(row=0, column=0, sticky="w", pady=5)
         input_entry = tk.Entry(frame, textvariable=self.input_path)
         input_entry.grid(row=0, column=1, sticky="ew", padx=5)
-        input_entry.drop_target_register(DND_FILES)
-        input_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.input_path))
+        if _HAS_DND:
+            input_entry.drop_target_register(DND_FILES)
+            input_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.input_path))
         tk.Button(frame, text=self.i18n['browse_button'], command=self._browse_input).grid(row=0, column=2, padx=5)
 
         tk.Label(frame, text=self.i18n['json_file_label']).grid(row=1, column=0, sticky="w", pady=5)
         json_entry = tk.Entry(frame, textvariable=self.json_path)
         json_entry.grid(row=1, column=1, sticky="ew", padx=5)
-        json_entry.drop_target_register(DND_FILES)
-        json_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.json_path))
+        if _HAS_DND:
+            json_entry.drop_target_register(DND_FILES)
+            json_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.json_path))
         tk.Button(frame, text=self.i18n['browse_button'], command=self._browse_json).grid(row=1, column=2, padx=5)
 
         tk.Label(frame, text=self.i18n['output_file_label']).grid(row=2, column=0, sticky="w", pady=5)
@@ -338,9 +348,20 @@ class AddTaskDialog(tk.Toplevel):
         else:
             frame.grid_remove()
 
-class App(TkinterDnD.Tk):
+class App(tk.Tk):
     def __init__(self):
-        super().__init__()
+        global _HAS_DND
+        if TkinterDnD is not None:
+            try:
+                # Try to initialize with drag-and-drop support
+                TkinterDnD.Tk.__init__(self)
+                _HAS_DND = True
+            except Exception:
+                tk.Tk.__init__(self)
+                _HAS_DND = False
+        else:
+            tk.Tk.__init__(self)
+            _HAS_DND = False
         self.i18n = TRANSLATIONS[get_language()]
         self.title(self.i18n['app_title'])
         self.geometry("700x600")
@@ -385,13 +406,15 @@ class App(TkinterDnD.Tk):
         tk.Label(self.single_mode_frame, text=self.i18n['input_file_label']).grid(row=0, column=0, sticky="w", pady=2)
         input_entry = tk.Entry(self.single_mode_frame, textvariable=self.input_path, state="readonly")
         input_entry.grid(row=0, column=1, sticky="ew", padx=5)
-        input_entry.drop_target_register(DND_FILES); input_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.input_path))
+        if _HAS_DND:
+            input_entry.drop_target_register(DND_FILES); input_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.input_path))
         tk.Button(self.single_mode_frame, text=self.i18n['browse_button'], command=self._browse_input).grid(row=0, column=2, sticky="w")
 
         tk.Label(self.single_mode_frame, text=self.i18n['json_file_label']).grid(row=1, column=0, sticky="w", pady=2)
         json_entry = tk.Entry(self.single_mode_frame, textvariable=self.json_path, state="readonly")
         json_entry.grid(row=1, column=1, sticky="ew", padx=5)
-        json_entry.drop_target_register(DND_FILES); json_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.json_path))
+        if _HAS_DND:
+            json_entry.drop_target_register(DND_FILES); json_entry.dnd_bind('<<Drop>>', lambda e: self._on_drop(e, self.json_path))
         json_buttons_frame = tk.Frame(self.single_mode_frame)
         json_buttons_frame.grid(row=1, column=2, sticky="w")
         tk.Button(json_buttons_frame, text=self.i18n['browse_button'], command=self._browse_json).pack(side=tk.LEFT)
@@ -600,11 +623,23 @@ class App(TkinterDnD.Tk):
         if not output_file:
             messagebox.showinfo(self.i18n['info_title'], self.i18n['info_no_output']); return
         output_dir = os.path.dirname(output_file)
-        if os.path.exists(output_dir): os.startfile(output_dir)
+        if os.path.exists(output_dir):
+                if platform.system() == "Darwin":
+                    subprocess.Popen(["open", output_dir])
+                elif platform.system() == "Windows":
+                    os.startfile(output_dir)
+                else:
+                    subprocess.Popen(["xdg-open", output_dir])
         else: messagebox.showerror(self.i18n['error_title'], self.i18n['error_dir_not_found'].format(output_dir))
 
     def _open_debug_folder(self):
-        if os.path.exists(self.debug_folder_path): os.startfile(self.debug_folder_path)
+        if os.path.exists(self.debug_folder_path):
+                if platform.system() == "Darwin":
+                    subprocess.Popen(["open", self.debug_folder_path])
+                elif platform.system() == "Windows":
+                    os.startfile(self.debug_folder_path)
+                else:
+                    subprocess.Popen(["xdg-open", self.debug_folder_path])
         else: messagebox.showinfo(self.i18n['info_title'], self.i18n['info_debug_not_found'])
 
     def _set_default_output_path(self, in_path):
