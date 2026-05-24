@@ -89,9 +89,34 @@ jobs:
         with:
           path: dist
 
+      - name: Generate release manifest
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path dist -Filter *.exe -Recurse | Sort-Object Name
+          $assets = foreach ($file in $files) {
+            [ordered]@{
+              name = $file.Name
+              path = $file.FullName.Replace((Get-Location).Path + [System.IO.Path]::DirectorySeparatorChar, '')
+              size = $file.Length
+              sha256 = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
+            }
+          }
+          $manifest = [ordered]@{
+            version = '${{ github.ref_name }}'
+            commit = '${{ github.sha }}'
+            prerelease = [System.Convert]::ToBoolean('${{ contains(github.ref_name, '-') }}')
+            generated_at = (Get-Date).ToUniversalTime().ToString('o')
+            assets = @($assets)
+          }
+          [System.IO.File]::WriteAllText('release-manifest.json', ($manifest | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
+
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/**/*.exe
+          files: |
+            dist/**/*.exe
+            release-manifest.json
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
