@@ -6,7 +6,7 @@ from typing import Any
 from ..ir import ElementIR, ImageIR, TextIR, TextRunIR, normalize_bbox, normalize_element_ir
 
 TEXT_TYPES = {"text", "title", "caption", "footnote", "footer", "header", "page_number", "list"}
-IMAGE_TYPES = {"image", "table", "figure", "formula"}
+IMAGE_TYPES = {"image", "table", "figure", "formula", "chart"}
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,31 @@ class MinerUPageData:
 
 class MinerUAdapter:
     """Map MinerU page data object into unified IR elements."""
+
+    # Short, repetitive text patterns commonly found in AI-tool watermarks
+    _WATERMARK_TEXT_PATTERNS: frozenset[str] = frozenset({
+        "notebooklm",
+    })
+
+    @staticmethod
+    def _block_text(item: dict[str, Any]) -> str:
+        text = str(item.get("text") or "").strip().lower()
+        if text:
+            return text
+        lines = item.get("lines") or []
+        for line in lines:
+            if not isinstance(line, dict):
+                continue
+            spans = line.get("spans") or []
+            for span in spans:
+                if isinstance(span, dict):
+                    text += str(span.get("content") or "")
+        return text.strip().lower()
+
+    @staticmethod
+    def _is_watermark_text(item: dict[str, Any]) -> bool:
+        block_text = MinerUAdapter._block_text(item)
+        return any(pattern in block_text for pattern in MinerUAdapter._WATERMARK_TEXT_PATTERNS)
 
     @staticmethod
     def _extract_is_watermark(item: dict[str, Any], fallback: bool = False) -> bool:
@@ -80,7 +105,7 @@ class MinerUAdapter:
                 self._to_ir_elements(
                     item,
                     is_discarded=True,
-                    is_watermark=self._extract_is_watermark(item, fallback=True),
+                    is_watermark=self._is_watermark_text(item),
                     include_text_runs=include_text_runs,
                 )
             )
@@ -107,7 +132,9 @@ class MinerUAdapter:
         if elem_type in TEXT_TYPES:
             return [self._text_element_from_block(item, is_discarded, is_watermark, include_text_runs=include_text_runs)]
 
-        return [self._text_element_from_block(item, is_discarded, is_watermark, include_text_runs=include_text_runs)]
+        # Unknown types are treated as image-like to preserve their visual
+        # footprint rather than silently skipping or crashing on empty text.
+        return self._image_like_to_elements(item, is_discarded, is_watermark, include_text_runs=include_text_runs)
 
     def _list_to_text_elements(
         self,

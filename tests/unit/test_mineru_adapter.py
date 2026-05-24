@@ -122,14 +122,27 @@ class TestMinerUAdapter(unittest.TestCase):
         self.assertEqual(len(image_elems), 1)
         self.assertEqual(len(text_elems), 2)
         self.assertTrue(any(elem.is_discarded for elem in text_elems))
-        self.assertTrue(any(elem.is_watermark for elem in text_elems if elem.is_discarded))
+        self.assertFalse(any(elem.is_watermark for elem in text_elems if elem.is_discarded))
 
-    def test_discarded_block_defaults_to_watermark_true(self):
+    def test_discarded_block_without_watermark_text_is_not_watermark(self):
         page = {
             "para_blocks": [],
             "images": [],
             "tables": [],
             "discarded_blocks": [{"type": "text", "bbox": [1, 1, 2, 2], "text": "wm"}],
+        }
+
+        elements = self.adapter.extract_page_elements(MinerUPageData.from_dict(page))
+        self.assertEqual(len(elements), 1)
+        self.assertTrue(elements[0].is_discarded)
+        self.assertFalse(elements[0].is_watermark)
+
+    def test_discarded_block_with_watermark_text_is_watermark(self):
+        page = {
+            "para_blocks": [],
+            "images": [],
+            "tables": [],
+            "discarded_blocks": [{"type": "footer", "bbox": [1, 1, 2, 2], "text": "NotebookLM"}],
         }
 
         elements = self.adapter.extract_page_elements(MinerUPageData.from_dict(page))

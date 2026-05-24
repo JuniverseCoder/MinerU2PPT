@@ -45,20 +45,21 @@ class TestCase3OCRBBoxDevTrackPadding(unittest.TestCase):
             page_image.shape[0],
         )
 
-        # In current OCR output this footer line is recognized as "开发资产NotebookLM"
-        # and corresponds to the user's "开发侧（DevTrack）" target area.
-        target_text = "开发资产NotebookLM"
+        target_text = "NotebookLM"
         matched_bbox = None
+        texts = []
         for elem in ocr_elements:
             text = "".join(
                 span.get("content", "")
                 for line in elem.get("lines", [])
                 for span in line.get("spans", [])
             )
+            texts.append(text)
             if text == target_text:
                 matched_bbox = elem.get("bbox")
                 break
 
+        self.assertIn("开发资产", texts)
         self.assertIsNotNone(matched_bbox, f"Target text not found by OCR on case3: {target_text}")
 
         y1 = int(round(matched_bbox[1]))

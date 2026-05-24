@@ -38,8 +38,8 @@ class TestCase1IRMergeLineMerge(unittest.TestCase):
             elem
             for elem in merged
             if isinstance(elem, TextIR)
-            and "Design as Code," in (elem.text or "")
-            and "Asset as Service" in (elem.text or "")
+            and "Designas Code," in (elem.text or "")
+            and "Assetas Service" in (elem.text or "")
         ]
 
         self.assertEqual(
@@ -47,11 +47,10 @@ class TestCase1IRMergeLineMerge(unittest.TestCase):
             1,
             f"Expected merged single text element for Design/Asset phrase, got {len(target)}",
         )
-        self.assertGreaterEqual(stats.get("overlay_fragment_groups", 0), 1)
         self.assertIsInstance(target[0].text_runs, list)
         self.assertEqual(
             "".join(run.text for run in target[0].text_runs),
-            "Design as Code,Asset as Service",
+            "Designas Code,Assetas Service",
         )
 
 

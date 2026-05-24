@@ -950,6 +950,7 @@ def convert_mineru_to_ppt(
     page_range=None,
     text_cleanup_margin_ratio=None,
     ocr_font_distance_threshold=None,
+    ocr_lang="ch",
 ):
     from .utils import pdf_to_images
     DPI = 300
@@ -980,6 +981,7 @@ def convert_mineru_to_ppt(
 
     if ocr_engine is None:
         ocr_engine = PaddleOCREngine(
+            lang=ocr_lang,
             device_policy=ocr_device_policy,
             use_angle_cls=False,
             model_root=ocr_model_root,

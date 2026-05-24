@@ -37,6 +37,12 @@ def main():
         default=None,
         help="Font sensitivity (higher = larger text box). Defaults depend on model variant.",
     )
+    parser.add_argument(
+        "--ocr-lang",
+        default="ch",
+        choices=["ch", "en"],
+        help="OCR language (default: ch). Use 'en' for English, 'ch' for Chinese/mixed Chinese-English.",
+    )
 
     args = parser.parse_args()
 
@@ -58,6 +64,7 @@ def main():
             page_range=args.page_range,
             text_cleanup_margin_ratio=args.text_cleanup_margin_ratio,
             ocr_font_distance_threshold=args.ocr_font_distance_threshold,
+            ocr_lang=args.ocr_lang,
         )
         print("Conversion successful.")
     except Exception as e:

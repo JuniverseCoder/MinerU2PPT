@@ -34,14 +34,27 @@ class PaddleOCREngine:
     _MODEL_FILE_CANDIDATES = ("inference.pdmodel", "inference.json")
     _PARAM_FILE_CANDIDATES = ("inference.pdiparams",)
     _MODEL_VARIANTS = {"auto", "lite", "server"}
+    SUPPORTED_LANGS = {"ch", "en"}
     _MODEL_NAME_MAPPING = {
         "lite": {
-            "text_detection_model_name": "PP-OCRv5_mobile_det",
-            "text_recognition_model_name": "PP-OCRv5_mobile_rec",
+            "ch": {
+                "text_detection_model_name": "PP-OCRv5_mobile_det",
+                "text_recognition_model_name": "PP-OCRv5_mobile_rec",
+            },
+            "en": {
+                "text_detection_model_name": "PP-OCRv5_mobile_det",
+                "text_recognition_model_name": "en_PP-OCRv5_mobile_rec",
+            },
         },
         "server": {
-            "text_detection_model_name": "PP-OCRv5_server_det",
-            "text_recognition_model_name": "PP-OCRv5_server_rec",
+            "ch": {
+                "text_detection_model_name": "PP-OCRv5_server_det",
+                "text_recognition_model_name": "PP-OCRv5_server_rec",
+            },
+            "en": {
+                "text_detection_model_name": "PP-OCRv5_server_det",
+                "text_recognition_model_name": "en_PP-OCRv5_mobile_rec",
+            },
         },
     }
     _DB_PARAM_DEFAULTS = {
@@ -89,6 +102,8 @@ class PaddleOCREngine:
             raise ValueError("device_policy must be one of: auto, gpu, cpu")
         if self.model_variant not in self._MODEL_VARIANTS:
             raise ValueError("model_variant must be one of: auto, lite, server")
+        if self.lang not in self.SUPPORTED_LANGS:
+            raise ValueError("lang must be one of: ch, en")
 
     def _resolve_device_order(self):
         if self.device_policy == "gpu":
@@ -197,6 +212,7 @@ class PaddleOCREngine:
         db_defaults: dict[str, float] | None,
     ):
         base_kwargs = {
+            "lang": self.lang,
             "enable_mkldnn": False,
             "enable_hpi": False,
             "use_tensorrt": False,
@@ -316,7 +332,7 @@ class PaddleOCREngine:
         print(f"[OCR] det_db_defaults={self._active_db_defaults}")
 
         model_dirs = None
-        model_names = self._MODEL_NAME_MAPPING.get(resolved_variant)
+        model_names = self._MODEL_NAME_MAPPING.get(resolved_variant, {}).get(self.lang)
         if model_root is not None:
             model_names = None
             self._assert_local_models_integrity(model_root, resolved_variant)
@@ -327,6 +343,7 @@ class PaddleOCREngine:
 
         print(f"[OCR] model_root={model_root} ({model_root_source})")
         print(f"[OCR] model_variant={resolved_variant} ({resolved_source})")
+        print(f"[OCR] lang={self.lang}")
         print(f"[OCR] device_order={device_order}")
         if model_root is not None:
             print(f"[OCR] model_root_layout={model_root_hint}")
@@ -380,33 +397,33 @@ class PaddleOCREngine:
                 return self._ocr.ocr(bgr_image)
             raise
 
-    def _maybe_resize_for_cpu_ocr(self, rgb_image):
-        if self._active_device != "cpu":
-            return rgb_image, 1.0, 1.0
+    def _prepare_image_for_ocr(self, rgb_image):
+        gray = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY)
+        ocr_image = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
 
-        env_value = os.getenv("MINERU_OCR_CPU_MAX_SIDE", "1920")
+        env_value = os.getenv("MINERU_OCR_MAX_SIDE") or os.getenv("MINERU_OCR_CPU_MAX_SIDE", "1920")
         try:
             max_side = int(env_value)
         except ValueError:
             max_side = 1920
 
         if max_side <= 0:
-            return rgb_image, 1.0, 1.0
+            return ocr_image, 1.0, 1.0
 
-        img_h, img_w = rgb_image.shape[:2]
+        img_h, img_w = ocr_image.shape[:2]
         longest_side = max(img_w, img_h)
         if longest_side <= max_side:
-            return rgb_image, 1.0, 1.0
+            return ocr_image, 1.0, 1.0
 
         scale = float(max_side) / float(longest_side)
         new_w = max(1, int(round(img_w * scale)))
         new_h = max(1, int(round(img_h * scale)))
-        resized = cv2.resize(rgb_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        resized = cv2.resize(ocr_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         sx = float(img_w) / float(new_w)
         sy = float(img_h) / float(new_h)
         print(
-            f"[OCR] CPU resize before OCR: {img_w}x{img_h} -> {new_w}x{new_h} "
-            f"(max_side={max_side})"
+            f"[OCR] resize before OCR: {img_w}x{img_h} -> {new_w}x{new_h} "
+            f"(max_side={max_side}, grayscale=True)"
         )
         return resized, sx, sy
 
@@ -430,7 +447,7 @@ class PaddleOCREngine:
                 }
             return []
 
-        ocr_image, sx, sy = self._maybe_resize_for_cpu_ocr(page_image)
+        ocr_image, sx, sy = self._prepare_image_for_ocr(page_image)
         ocr_h, ocr_w = ocr_image.shape[:2]
 
         raw_result = self._run_ocr(ocr_image)

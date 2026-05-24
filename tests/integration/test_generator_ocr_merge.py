@@ -267,6 +267,7 @@ class TestGeneratorOCRMerge(unittest.TestCase):
             )
 
         mocked_engine.assert_called_once_with(
+            lang="ch",
             device_policy="cpu",
             use_angle_cls=False,
             model_root="models/paddleocr",
@@ -316,6 +317,7 @@ class TestGeneratorOCRMerge(unittest.TestCase):
             )
 
         mocked_engine.assert_called_once_with(
+            lang="ch",
             device_policy="auto",
             use_angle_cls=False,
             model_root=None,
