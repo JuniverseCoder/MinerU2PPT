@@ -92,7 +92,7 @@ jobs:
       - name: Generate release manifest
         shell: pwsh
         run: |
-          $files = Get-ChildItem -Path dist -Filter *.exe -Recurse | Sort-Object Name
+          $files = Get-ChildItem -Path dist -Filter *.exe -Recurse -File | Sort-Object Name
           $assets = foreach ($file in $files) {
             [ordered]@{
               name = $file.Name
