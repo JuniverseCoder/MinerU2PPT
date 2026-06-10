@@ -49,6 +49,40 @@ The application also supports converting multiple files at once in Batch Mode.
 3.  **Manage Tasks**: You can add multiple tasks to the list. If you need to remove a task, select it from the list and click "Delete Task".
 4.  **Start Batch Conversion**: Once all your tasks are added, click "Start Batch Conversion". The application will process each task sequentially. A log will show the progress for each file.
 
+## For macOS Users: Running from Source
+
+Since there is no pre-built macOS release, you can run the application from source. Python 3.10–3.12 is required (PaddlePaddle does not yet support 3.13+).
+
+1.  **Install Python 3.12 and tkinter** (via [Homebrew](https://brew.sh)):
+    ```bash
+    brew install python@3.12 python-tk@3.12
+    ```
+
+2.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/JuniverseCoder/MinerU2PPT.git
+    cd MinerU2PPT
+    ```
+
+3.  **Create a virtual environment and install dependencies**:
+    ```bash
+    /opt/homebrew/bin/python3.12 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements-cpu.txt
+    ```
+
+4.  **Run the application**:
+    -   **GUI**:
+        ```bash
+        python gui.py
+        ```
+    -   **CLI**:
+        ```bash
+        python main.py --json <path_to_json> --input <path_to_pdf_or_image> --output <output.pptx>
+        ```
+
+> **Note:** Drag-and-drop may not work on macOS with Tcl/Tk 9.x (the default from Homebrew). Use the "Browse..." buttons instead.
+
 ## For Developers
 
 This section provides instructions for running the application from source and packaging it for distribution.
